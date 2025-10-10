@@ -1,4 +1,9 @@
 import torch
+import sys
+import os
+
+# 添加项目根目录到路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def show_device_list(backend: str) -> int:
@@ -61,6 +66,32 @@ def show_device_list(backend: str) -> int:
     return 0
 
 
+def check_mlx_devices() -> int:
+    """
+    检查 MLX 设备可用性
+    
+    Returns:
+        MLX 设备数量
+    """
+    try:
+        from indextts.utils.device_utils import get_device_info
+        info = get_device_info()
+        
+        if info["mlx_available"]:
+            print("MLX: Apple Silicon 优化框架可用!")
+            print(f"  * 推荐用于 Apple Silicon Mac 设备")
+            return 1
+        else:
+            print("MLX: Apple Silicon 优化框架不可用")
+            return 0
+    except ImportError:
+        print("MLX: 未安装 MLX 相关依赖")
+        return 0
+    except Exception as e:
+        print(f"MLX: 检查失败 - {e}")
+        return 0
+
+
 def check_torch_devices() -> None:
     """
     Checks for the availability of various PyTorch hardware acceleration
@@ -74,11 +105,33 @@ def check_torch_devices() -> None:
     device_count += show_device_list("cuda")  # NVIDIA CUDA / AMD ROCm.
     device_count += show_device_list("xpu")  # Intel XPU.
     device_count += show_device_list("mps")  # Apple Metal Performance Shaders (MPS).
+    
+    # 检查 MLX
+    mlx_count = check_mlx_devices()
+    device_count += mlx_count
 
+    print("\n" + "="*50)
+    
     if device_count > 0:
-        print("\nHardware acceleration detected. Your system is ready!")
+        print("Hardware acceleration detected. Your system is ready!")
+        
+        # 显示推荐设备
+        try:
+            from indextts.utils.device_utils import detect_best_device
+            best_device = detect_best_device()
+            print(f"Recommended device: {best_device}")
+            
+            if best_device == "mlx":
+                print("💡 MLX is the recommended backend for Apple Silicon devices")
+            elif best_device == "mps":
+                print("💡 MPS is available for Apple Silicon devices")
+            elif best_device == "cuda":
+                print("💡 CUDA is available for NVIDIA/AMD GPU devices")
+        except ImportError:
+            pass
     else:
-        print("\nNo hardware acceleration detected. Running in CPU mode.")
+        print("No hardware acceleration detected. Running in CPU mode.")
+        print("💡 Consider installing appropriate GPU drivers for better performance")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from indextts.gpt.model_v2 import UnifiedVoice
 from indextts.utils.maskgct_utils import build_semantic_model, build_semantic_codec
 from indextts.utils.checkpoint import load_checkpoint
 from indextts.utils.front import TextNormalizer, TextTokenizer
+from indextts.utils.device_utils import detect_best_device, optimize_device_settings, get_device_config, cleanup_device_memory
 
 from indextts.s2mel.modules.commons import load_checkpoint2, MyModel
 from indextts.s2mel.modules.bigvgan import bigvgan
@@ -49,27 +50,28 @@ class IndexTTS2:
             use_cuda_kernel (None | bool): whether to use BigVGan custom fused activation CUDA kernel, only for CUDA device.
             use_deepspeed (bool): whether to use DeepSpeed or not.
         """
+        # 使用新的设备检测和优化系统
         if device is not None:
-            self.device = device
-            self.use_fp16 = False if device == "cpu" else use_fp16
-            self.use_cuda_kernel = use_cuda_kernel is not None and use_cuda_kernel and device.startswith("cuda")
-        elif torch.cuda.is_available():
-            self.device = "cuda:0"
-            self.use_fp16 = use_fp16
-            self.use_cuda_kernel = use_cuda_kernel is None or use_cuda_kernel
-        elif hasattr(torch, "xpu") and torch.xpu.is_available():
-            self.device = "xpu"
-            self.use_fp16 = use_fp16
-            self.use_cuda_kernel = False
-        elif hasattr(torch, "mps") and torch.backends.mps.is_available():
-            self.device = "mps"
-            self.use_fp16 = False  # Use float16 on MPS is overhead than float32
-            self.use_cuda_kernel = False
+            optimized_settings = optimize_device_settings(
+                device, use_fp16, use_cuda_kernel, use_deepspeed
+            )
         else:
-            self.device = "cpu"
-            self.use_fp16 = False
-            self.use_cuda_kernel = False
+            # 自动检测最佳设备
+            best_device = detect_best_device()
+            optimized_settings = optimize_device_settings(
+                best_device, use_fp16, use_cuda_kernel, use_deepspeed
+            )
+        
+        self.device = optimized_settings["device"]
+        self.use_fp16 = optimized_settings["use_fp16"]
+        self.use_cuda_kernel = optimized_settings["use_cuda_kernel"]
+        self.use_deepspeed = optimized_settings["use_deepspeed"]
+        self.device_config = optimized_settings["config"]
+        
+        if self.device == "cpu":
             print(">> Be patient, it may take a while to run in CPU mode.")
+        elif self.device == "mlx":
+            print(">> Using MLX acceleration for Apple Silicon (experimental).")
 
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
@@ -414,7 +416,7 @@ class IndexTTS2:
                 self.cache_s2mel_style = None
                 self.cache_s2mel_prompt = None
                 self.cache_mel = None
-                torch.cuda.empty_cache()
+                cleanup_device_memory(self.device)
             audio,sr = self._load_and_cut_audio(spk_audio_prompt,15,verbose)
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
             audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
@@ -468,7 +470,7 @@ class IndexTTS2:
         if self.cache_emo_cond is None or self.cache_emo_audio_prompt != emo_audio_prompt:
             if self.cache_emo_cond is not None:
                 self.cache_emo_cond = None
-                torch.cuda.empty_cache()
+                cleanup_device_memory(self.device)
             emo_audio, _ = self._load_and_cut_audio(emo_audio_prompt,15,verbose,sr=16000)
             emo_inputs = self.extract_features(emo_audio, sampling_rate=16000, return_tensors="pt")
             emo_input_features = emo_inputs["input_features"]

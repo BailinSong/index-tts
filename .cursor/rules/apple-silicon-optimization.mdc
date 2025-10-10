@@ -1,0 +1,66 @@
+---
+description: "Apple Silicon 设备优化相关规则"
+---
+
+# Apple Silicon 设备优化规则
+
+## 设备选择策略
+
+### MLX vs MPS 选择指南
+**推荐顺序（Apple Silicon 设备）:**
+1. **MLX** - 最佳性能，专门为 Apple Silicon 优化
+2. **MPS** - 兼容性好，PyTorch 原生支持
+3. **CPU** - 备用选项
+
+### MLX 优势
+- 针对 Apple Silicon 深度优化
+- 更好的内存管理
+- 更快的推理速度
+- 支持混合精度计算
+
+### MPS 优势
+- PyTorch 原生支持
+- 更好的兼容性
+- 无需额外依赖
+
+## 实现要点
+
+### 设备检测 ([indextts/utils/device_utils.py](mdc:indextts/utils/device_utils.py))
+```python
+# 自动检测最佳设备
+best_device = detect_best_device()
+
+# 获取设备配置
+config = get_device_config(device)
+
+# 优化设备设置
+settings = optimize_device_settings(device, use_fp16, use_cuda_kernel, use_deepspeed)
+```
+
+### MLX 优化 ([indextts/utils/mlx_inference.py](mdc:indextts/utils/mlx_inference.py))
+- 提供 MLX 特定的推理优化
+- 支持张量格式转换
+- 内存管理优化
+
+### 性能优化建议
+1. **使用 FP16**: MLX 支持，MPS 不建议
+2. **内存管理**: 使用设备特定的清理函数
+3. **批处理**: 合理设置批处理大小
+4. **模型优化**: 使用适当的量化策略
+
+## 开发注意事项
+
+### 兼容性处理
+- 始终提供 MPS 作为 MLX 的回退选项
+- 检测 MLX 可用性并提供相应提示
+- 处理设备转换异常
+
+### 错误处理
+- 优雅降级到 MPS 或 CPU
+- 提供清晰的错误信息
+- 记录性能警告
+
+### 测试建议
+- 在多种设备上测试
+- 比较不同后端的性能
+- 验证输出一致性
