@@ -1,0 +1,47 @@
+---
+globs: *.py
+---
+
+# Python 编码规范
+
+## 代码风格
+- 遵循 PEP 8 规范
+- 使用 4 个空格缩进，不使用制表符
+- 行长度限制为 120 字符
+- 使用有意义的变量和函数名
+
+## 导入规范
+```python
+# 标准库导入
+import os
+import sys
+import warnings
+
+# 第三方库导入
+import torch
+import torchaudio
+import librosa
+from omegaconf import OmegaConf
+
+# 本地模块导入
+from indextts.gpt.model_v2 import UnifiedVoice
+from indextts.utils.checkpoint import load_checkpoint
+```
+
+## 错误处理
+- 使用适当的异常处理
+- 对文件操作进行存在性检查
+- 使用 `warnings.filterwarnings()` 抑制不必要的警告
+
+## 类型提示
+- 尽可能使用类型提示
+- 对于复杂类型使用 `typing` 模块
+
+## 文档字符串
+- 使用 Google 风格的文档字符串
+- 为公共函数和类提供详细的文档
+
+## 配置管理
+- 使用 [pyproject.toml](mdc:pyproject.toml) 管理依赖
+- 使用 `uv` 作为包管理器
+- 配置文件使用 YAML 格式

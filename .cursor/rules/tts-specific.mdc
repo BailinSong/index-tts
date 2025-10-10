@@ -1,0 +1,52 @@
+---
+description: "TTS模型开发和推理相关规则"
+---
+
+# TTS 项目特定开发规则
+
+## 模型架构理解
+IndexTTS2 是一个自回归零样本文本转语音系统，具有以下特点：
+- 支持情感表达控制
+- 支持时长精确控制
+- 支持零样本语音克隆
+- 支持多语言合成
+
+## 核心组件
+### GPT 模型 ([indextts/gpt/model_v2.py](mdc:indextts/gpt/model_v2.py))
+- `UnifiedVoice` 是核心的语音生成模型
+- 支持情感向量控制和文本情感描述
+- 使用 Conformer 编码器处理音频特征
+
+### 声码器 ([indextts/s2mel/modules/bigvgan/](mdc:indextts/s2mel/modules/bigvgan/))
+- BigVGAN 用于将梅尔频谱转换为音频波形
+- 支持 CUDA 内核加速
+- 支持 FP16 推理以节省显存
+
+### 特征提取
+- 使用 Wav2Vec2-BERT 提取语义特征
+- 使用 CAMPPlus 提取说话人特征
+- 支持多种音频格式输入
+
+## 推理流程
+1. 文本预处理和分词
+2. 音频提示特征提取
+3. GPT 模型生成梅尔频谱
+4. 声码器转换为音频波形
+
+## 性能优化
+- 使用 FP16 推理减少显存占用
+- 支持 DeepSpeed 加速推理
+- 使用 CUDA 内核优化 BigVGAN
+- 支持批处理和分段处理长文本
+
+## 情感控制
+支持多种情感控制方式：
+1. 与音色参考音频相同
+2. 使用情感参考音频
+3. 使用情感向量控制（8维向量）
+4. 使用情感描述文本控制
+
+## 配置管理
+- 模型配置存储在 [checkpoints/config.yaml](mdc:checkpoints/config.yaml)
+- 支持动态设备检测（CUDA/MPS/XPU/CPU）
+- 自动下载必要的模型文件

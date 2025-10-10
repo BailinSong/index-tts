@@ -1,0 +1,71 @@
+---
+description: "GPU和性能优化相关规则"
+---
+
+# GPU 和性能优化规则
+
+## 设备支持
+IndexTTS2 支持多种计算设备：
+- **CUDA**: NVIDIA GPU，推荐用于训练和推理
+- **MPS**: Apple Silicon Mac，支持推理
+- **XPU**: Intel GPU，支持推理
+- **CPU**: 备用选项，性能较慢
+
+## 性能优化选项
+### FP16 推理
+- 使用 `use_fp16=True` 启用半精度推理
+- 减少显存占用约50%
+- 轻微的质量损失
+- 推荐用于生产环境
+
+### DeepSpeed 支持
+- 使用 `use_deepspeed=True` 启用DeepSpeed加速
+- 可能需要额外配置
+- 在某些系统上可能加速推理
+- 需要安装 `deepspeed` 依赖
+
+### CUDA 内核优化
+- 使用 `use_cuda_kernel=True` 启用BigVGAN CUDA内核
+- 仅在CUDA设备上有效
+- 显著提升声码器性能
+- 需要编译CUDA扩展
+
+## 显存管理
+### 批处理策略
+- 长文本自动分段处理
+- 可配置 `max_text_tokens_per_segment`
+- 建议值：80-200 tokens
+- 避免显存溢出
+
+### 模型加载优化
+- 延迟加载不必要的组件
+- 支持模型权重共享
+- 使用检查点机制
+
+## 性能监控
+### GPU 检查工具
+使用 [tools/gpu_check.py](mdc:tools/gpu_check.py) 检查GPU环境：
+```bash
+uv run tools/gpu_check.py
+```
+
+### 推理参数调优
+- `temperature`: 控制随机性 (0.1-2.0)
+- `top_p`: 核采样参数 (0.0-1.0)
+- `top_k`: Top-K采样参数 (0-100)
+- `num_beams`: 束搜索宽度 (1-10)
+
+## 环境配置
+### CUDA 要求
+- NVIDIA CUDA Toolkit 12.8 或更新版本
+- 兼容的GPU驱动
+- 足够的显存（推荐8GB+）
+
+### 依赖安装
+```bash
+# 安装CUDA版本的PyTorch
+uv sync --all-extras
+
+# 检查安装
+uv run tools/gpu_check.py
+```

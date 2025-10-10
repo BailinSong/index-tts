@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+
+# IndexTTS 项目结构指南
+
+IndexTTS2 是一个突破性的情感表达和时长控制自回归零样本文本转语音系统。
+
+## 核心模块结构
+
+### 主要入口点
+- [webui.py](mdc:webui.py) - Web界面入口，使用Gradio构建
+- [indextts/cli.py](mdc:indextts/cli.py) - 命令行界面入口
+- [indextts/infer_v2.py](mdc:indextts/infer_v2.py) - IndexTTS2 推理核心模块
+
+### 核心模块
+- [indextts/gpt/](mdc:indextts/gpt/) - GPT模型相关代码
+  - [indextts/gpt/model_v2.py](mdc:indextts/gpt/model_v2.py) - 统一语音模型
+  - [indextts/gpt/conformer/](mdc:indextts/gpt/conformer/) - Conformer编码器
+- [indextts/s2mel/](mdc:indextts/s2mel/) - 语音到梅尔频谱转换
+- [indextts/utils/](mdc:indextts/utils/) - 工具函数
+  - [indextts/utils/front.py](mdc:indextts/utils/front.py) - 文本预处理
+  - [indextts/utils/checkpoint.py](mdc:indextts/utils/checkpoint.py) - 模型检查点处理
+- [indextts/BigVGAN/](mdc:indextts/BigVGAN/) - BigVGAN声码器
+- [indextts/vqvae/](mdc:indextts/vqvae/) - VQ-VAE相关代码
+
+### 配置文件
+- [checkpoints/config.yaml](mdc:checkpoints/config.yaml) - 模型配置
+- [pyproject.toml](mdc:pyproject.toml) - 项目依赖管理
+
+### 资源文件
+- [examples/](mdc:examples/) - 示例音频和测试用例
+- [checkpoints/](mdc:checkpoints/) - 预训练模型权重
+- [outputs/](mdc:outputs/) - 生成的音频输出
+
+## 开发环境
+- 使用 `uv` 作为包管理器
+- Python >= 3.10
+- 支持CUDA、MPS、XPU等加速设备
+- 可选DeepSpeed支持

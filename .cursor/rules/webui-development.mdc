@@ -1,0 +1,72 @@
+---
+globs: webui.py,*.gradio,*.streamlit
+---
+
+# WebUI 开发规则
+
+## Gradio 界面开发 ([webui.py](mdc:webui.py))
+
+### 界面结构
+- 使用 `gr.Blocks` 构建复杂界面
+- 支持多标签页和折叠面板
+- 响应式布局设计
+- 移动端适配
+
+### 组件使用规范
+```python
+# 音频组件
+prompt_audio = gr.Audio(
+    label="音色参考音频",
+    sources=["upload", "microphone"],
+    type="filepath"
+)
+
+# 文本组件
+input_text = gr.TextArea(
+    label="文本",
+    placeholder="请输入目标文本"
+)
+
+# 滑块组件
+emo_weight = gr.Slider(
+    label="情感权重",
+    minimum=0.0,
+    maximum=1.0,
+    value=0.65,
+    step=0.01
+)
+```
+
+### 事件处理
+- 使用 `change` 事件处理组件状态变化
+- 使用 `click` 事件处理按钮点击
+- 支持异步处理和进度显示
+
+### 国际化支持
+```python
+from tools.i18n.i18n import I18nAuto
+i18n = I18nAuto(language="Auto")
+
+# 使用国际化文本
+label=i18n("音色参考音频")
+```
+
+### 示例数据管理
+- 使用 `gr.Dataset` 管理示例数据
+- 支持动态加载示例
+- 实验性功能的条件显示
+
+### 参数验证
+- 输入文件存在性检查
+- 文本内容验证
+- 参数范围验证
+
+### 错误处理
+- 友好的错误提示
+- 异常情况的优雅降级
+- 用户操作的反馈
+
+### 性能优化
+- 使用队列机制处理并发请求
+- 进度条显示长时间操作
+- 内存管理和资源清理
