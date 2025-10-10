@@ -13,30 +13,43 @@ def detect_best_device() -> str:
     自动检测最佳可用设备
     
     Returns:
-        str: 设备名称 (cuda, mps, mlx, xpu, cpu)
+        str: 设备名称 (cuda, mps, xpu, cpu)
     """
     # 检查 CUDA
     if torch.cuda.is_available():
         return "cuda"
     
-    # 检查 MLX (Apple Silicon 优化)
-    try:
-        import mlx.core as mx
-        if mx.metal.is_available():
-            return "mlx"
-    except ImportError:
-        pass
-    
-    # 检查 MPS (Apple Silicon)
-    if hasattr(torch, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    
     # 检查 XPU (Intel)
     if hasattr(torch, "xpu") and torch.xpu.is_available():
         return "xpu"
     
+    # 检查 MPS (Apple Silicon) - 包括 MLX 优化
+    if hasattr(torch, "mps") and torch.backends.mps.is_available():
+        # 检查是否有 MLX 支持
+        try:
+            import mlx.core as mx
+            if mx.metal.is_available():
+                return "mps"  # 使用 MPS 但标记为 MLX 优化
+        except ImportError:
+            pass
+        return "mps"
+    
     # 默认使用 CPU
     return "cpu"
+
+
+def has_mlx_support() -> bool:
+    """
+    检查是否有 MLX 支持
+    
+    Returns:
+        bool: 是否有 MLX 支持
+    """
+    try:
+        import mlx.core as mx
+        return mx.metal.is_available()
+    except ImportError:
+        return False
 
 
 def get_device_config(device: str) -> Dict[str, Any]:
@@ -72,7 +85,8 @@ def get_device_config(device: str) -> Dict[str, Any]:
             "supports_deepspeed": False,
             "memory_cleanup_func": torch.mps.empty_cache,
             "synchronize_func": None,
-            "device_type": "gpu"
+            "device_type": "gpu",
+            "has_mlx_support": False  # 将在运行时检测
         },
         "xpu": {
             "supports_fp16": True,
@@ -92,7 +106,14 @@ def get_device_config(device: str) -> Dict[str, Any]:
         }
     }
     
-    return configs.get(device, configs["cpu"])
+    config = configs.get(device, configs["cpu"])
+    
+    # 动态检测 MLX 支持
+    if device == "mps":
+        config = config.copy()
+        config["has_mlx_support"] = has_mlx_support()
+    
+    return config
 
 
 def optimize_device_settings(device: str, use_fp16: Optional[bool] = None, 

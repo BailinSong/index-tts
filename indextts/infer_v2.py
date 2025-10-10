@@ -68,10 +68,29 @@ class IndexTTS2:
         self.use_deepspeed = optimized_settings["use_deepspeed"]
         self.device_config = optimized_settings["config"]
         
+        # 打印运行时设备信息
+        print("=" * 60)
+        print("🚀 IndexTTS2 运行时信息")
+        print("=" * 60)
+        print(f"📱 设备类型: {self.device}")
+        print(f"🔢 浮点精度: {'FP16' if self.use_fp16 else 'FP32'}")
+        print(f"⚡ CUDA 内核: {'启用' if self.use_cuda_kernel else '禁用'}")
+        print(f"🚀 DeepSpeed: {'启用' if self.use_deepspeed else '禁用'}")
+        
+        # 显示设备特定信息
         if self.device == "cpu":
-            print(">> Be patient, it may take a while to run in CPU mode.")
-        elif self.device == "mlx":
-            print(">> Using MLX acceleration for Apple Silicon (experimental).")
+            print("⚠️  警告: 使用 CPU 模式，推理可能较慢")
+        elif self.device == "mps":
+            if self.device_config.get("has_mlx_support", False):
+                print("🍎 使用 MPS 加速 (Apple Silicon + MLX 优化)")
+            else:
+                print("🍎 使用 MPS 加速 (Apple Silicon)")
+        elif self.device.startswith("cuda"):
+            print("🔥 使用 CUDA 加速 (NVIDIA GPU)")
+        elif self.device == "xpu":
+            print("💎 使用 XPU 加速 (Intel GPU)")
+        
+        print("=" * 60)
 
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
@@ -88,7 +107,12 @@ class IndexTTS2:
             self.gpt.eval().half()
         else:
             self.gpt.eval()
-        print(">> GPT weights restored from:", self.gpt_path)
+        
+        print("📦 模型加载完成:")
+        print(f"   - GPT 模型路径: {self.gpt_path}")
+        print(f"   - 模型设备: {self.device}")
+        print(f"   - 模型精度: {'FP16' if self.use_fp16 else 'FP32'}")
+        print("✅ GPT 模型已就绪")
 
         if use_deepspeed:
             try:
@@ -138,7 +162,12 @@ class IndexTTS2:
         self.s2mel = s2mel.to(self.device)
         self.s2mel.models['cfm'].estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
         self.s2mel.eval()
-        print(">> s2mel weights restored from:", s2mel_path)
+        
+        print("📦 S2Mel 模型加载完成:")
+        print(f"   - S2Mel 模型路径: {s2mel_path}")
+        print(f"   - 模型设备: {self.device}")
+        print(f"   - 缓存设置: max_batch_size=1, max_seq_length=8192")
+        print("✅ S2Mel 模型已就绪")
 
         # load campplus_model
         campplus_ckpt_path = hf_hub_download(
@@ -155,7 +184,12 @@ class IndexTTS2:
         self.bigvgan = self.bigvgan.to(self.device)
         self.bigvgan.remove_weight_norm()
         self.bigvgan.eval()
-        print(">> bigvgan weights restored from:", bigvgan_name)
+        
+        print("📦 BigVGAN 声码器加载完成:")
+        print(f"   - BigVGAN 模型: {bigvgan_name}")
+        print(f"   - 模型设备: {self.device}")
+        print(f"   - CUDA 内核: {'启用' if self.use_cuda_kernel else '禁用'}")
+        print("✅ BigVGAN 声码器已就绪")
 
         self.bpe_path = os.path.join(self.model_dir, self.cfg.dataset["bpe_model"])
         self.normalizer = TextNormalizer()
@@ -185,6 +219,17 @@ class IndexTTS2:
             "center": False
         }
         self.mel_fn = lambda x: mel_spectrogram(x, **mel_fn_args)
+
+        # 打印初始化完成信息
+        print("\n" + "=" * 60)
+        print("🎉 IndexTTS2 初始化完成!")
+        print("=" * 60)
+        print(f"📱 运行设备: {self.device}")
+        print(f"🔢 浮点精度: {'FP16' if self.use_fp16 else 'FP32'}")
+        print(f"⚡ CUDA 内核: {'启用' if self.use_cuda_kernel else '禁用'}")
+        print(f"🚀 DeepSpeed: {'启用' if self.use_deepspeed else '禁用'}")
+        print("✅ 所有模型已加载并准备就绪")
+        print("=" * 60 + "\n")
 
         # 缓存参考音频：
         self.cache_spk_cond = None
@@ -369,10 +414,21 @@ class IndexTTS2:
               emo_vector=None,
               use_emo_text=False, emo_text=None, use_random=False, interval_silence=200,
               verbose=False, max_text_tokens_per_segment=120, stream_return=False, quick_streaming_tokens=0, **generation_kwargs):
-        print(">> starting inference...")
+        print("\n" + "=" * 60)
+        print("🎤 开始语音推理...")
+        print("=" * 60)
+        print(f"📱 推理设备: {self.device}")
+        print(f"🔢 浮点精度: {'FP16' if self.use_fp16 else 'FP32'}")
+        print(f"📝 输入文本: {text[:50]}{'...' if len(text) > 50 else ''}")
+        print(f"🎵 音色参考: {spk_audio_prompt}")
+        if emo_audio_prompt:
+            print(f"😊 情感参考: {emo_audio_prompt}")
+        print(f"⚖️  情感权重: {emo_alpha}")
+        print("=" * 60)
+        
         self._set_gr_progress(0, "starting inference...")
         if verbose:
-            print(f"origin text:{text}, spk_audio_prompt:{spk_audio_prompt}, "
+            print(f"详细参数 - origin text:{text}, spk_audio_prompt:{spk_audio_prompt}, "
                   f"emo_audio_prompt:{emo_audio_prompt}, emo_alpha:{emo_alpha}, "
                   f"emo_vector:{emo_vector}, use_emo_text:{use_emo_text}, "
                   f"emo_text:{emo_text}")
