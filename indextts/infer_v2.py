@@ -53,13 +53,23 @@ class IndexTTS2:
         # MLX optimization mode for Apple Silicon M4
         self.use_mlx = use_mlx
         self.mlx_available = False
+        self.mlx_cache = None
         
         if use_mlx:
             from indextts.utils.mlx_utils import check_mlx_available
+            from indextts.utils.mlx_cache import MLXModelCache
+            
             self.mlx_available = check_mlx_available()
             if self.mlx_available:
-                print(">> MLX optimizations enabled for Apple Silicon M4")
-                print(">> Using MPS backend with float32 for optimal performance")
+                print("\n" + "="*70)
+                print("MLX Framework Enabled for Apple Silicon M4")
+                print("="*70)
+                print("Mode: Full MLX Native Implementation")
+                print("Strategy: Convert models to MLX, cache for fast loading")
+                print("="*70 + "\n")
+                
+                # Initialize cache manager
+                self.mlx_cache = MLXModelCache(cache_dir=os.path.join(model_dir, "mlx"))
             else:
                 print(">> MLX not available, using standard mode")
                 self.use_mlx = False
