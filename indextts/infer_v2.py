@@ -738,6 +738,14 @@ class IndexTTS2:
                                                                  ylens=target_lengths,
                                                                  n_quantizers=3,
                                                                  f0=None)[0]
+                    
+                    # Fix batch dimension mismatch if needed
+                    if cond.shape[0] != prompt_condition.shape[0]:
+                        print(f">> [MLX Fix] Adjusting batch dimension: cond {cond.shape} vs prompt {prompt_condition.shape}")
+                        # Take first batch element if cond has extra batch dimension
+                        if cond.shape[0] > prompt_condition.shape[0]:
+                            cond = cond[:prompt_condition.shape[0]]
+                    
                     cat_condition = torch.cat([prompt_condition, cond], dim=1)
                     vc_target = self.s2mel.models['cfm'].inference(cat_condition,
                                                                    torch.LongTensor([cat_condition.size(1)]).to(
