@@ -229,12 +229,10 @@ class UnifiedVoiceMLX(nn.Module):
             max_length=kwargs.get('max_generate_length', 1500)
         )
         
-        # Convert back to PyTorch (to CPU first to handle dtype conversion)
-        codes = mlx_to_torch(codes_mlx, device='cpu')
-        conditioning_latent = mlx_to_torch(conditioning, device='cpu')
-        
-        # Ensure correct dtype (int64/long) before moving to MPS
-        codes = codes.long()
+        # Convert MLX arrays to PyTorch via CPU to handle dtype properly
+        # MLX returns uint32, need int64 for PyTorch
+        codes = mlx_to_torch(codes_mlx, device='cpu').long()  # Convert to int64 on CPU
+        conditioning_latent = mlx_to_torch(conditioning, device='cpu')  # Float32 is fine
         
         # Now move to MPS device
         codes = codes.to('mps')
