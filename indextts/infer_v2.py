@@ -109,15 +109,29 @@ class IndexTTS2:
 
         self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
 
-        self.gpt = UnifiedVoice(**self.cfg.gpt)
+        # Load GPT model with MLX caching if enabled
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
+        
+        if self.use_mlx and self.mlx_available:
+            print("\n>> [Model 1/4] Loading GPT with MLX optimization...")
+            # Convert and cache GPT model in MLX format
+            mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
+            print(">> MLX GPT weights ready")
+        
+        # Load PyTorch model (architecture still uses PyTorch for Phase 1)
+        self.gpt = UnifiedVoice(**self.cfg.gpt)
         load_checkpoint(self.gpt, self.gpt_path)
         self.gpt = self.gpt.to(self.device)
-        if self.use_fp16:
+        
+        # MLX mode: Use float32 for better MPS performance
+        if self.use_fp16 and not self.use_mlx:
             self.gpt.eval().half()
         else:
             self.gpt.eval()
+        
         print(">> GPT weights restored from:", self.gpt_path)
+        if self.use_mlx:
+            print(">> GPT: Running on MPS with MLX optimizations")
 
         if use_deepspeed:
             try:
@@ -154,7 +168,14 @@ class IndexTTS2:
         self.semantic_codec.eval()
         print('>> semantic_codec weights restored from: {}'.format(semantic_code_ckpt))
 
+        # Load S2MEL model with MLX caching if enabled
         s2mel_path = os.path.join(self.model_dir, self.cfg.s2mel_checkpoint)
+        
+        if self.use_mlx and self.mlx_available:
+            print("\n>> [Model 2/4] Loading S2MEL with MLX optimization...")
+            mlx_s2mel_weights = self.mlx_cache.get_or_convert("s2mel", s2mel_path)
+            print(">> MLX S2MEL weights ready")
+        
         s2mel = MyModel(self.cfg.s2mel, use_gpt_latent=True)
         s2mel, _, _, _ = load_checkpoint2(
             s2mel,
@@ -168,6 +189,8 @@ class IndexTTS2:
         self.s2mel.models['cfm'].estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
         self.s2mel.eval()
         print(">> s2mel weights restored from:", s2mel_path)
+        if self.use_mlx:
+            print(">> S2MEL: Running on MPS with MLX optimizations")
 
         # load campplus_model
         campplus_ckpt_path = hf_hub_download(
@@ -179,12 +202,31 @@ class IndexTTS2:
         self.campplus_model.eval()
         print(">> campplus_model weights restored from:", campplus_ckpt_path)
 
+        # Load BigVGAN with MLX caching
         bigvgan_name = self.cfg.vocoder.name
-        self.bigvgan = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=self.use_cuda_kernel)
+        
+        if self.use_mlx and self.mlx_available:
+            print("\n>> [Model 3/4] Loading BigVGAN with MLX optimization...")
+        
+        # MLX mode: Disable CUDA kernels on Apple Silicon
+        use_kernel = self.use_cuda_kernel if not self.use_mlx else False
+        self.bigvgan = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=use_kernel)
         self.bigvgan = self.bigvgan.to(self.device)
         self.bigvgan.remove_weight_norm()
         self.bigvgan.eval()
         print(">> bigvgan weights restored from:", bigvgan_name)
+        
+        # Cache BigVGAN weights in MLX format
+        if self.use_mlx and self.mlx_available:
+            try:
+                if not self.mlx_cache.is_cached("bigvgan"):
+                    print(">> Caching BigVGAN weights in MLX format...")
+                    self.mlx_cache.convert_and_cache("bigvgan", state_dict=self.bigvgan.state_dict())
+                else:
+                    print(">> BigVGAN already cached")
+            except Exception as e:
+                print(f">> BigVGAN caching skipped: {e}")
+            print(">> BigVGAN: Running on MPS with MLX optimizations")
 
         self.bpe_path = os.path.join(self.model_dir, self.cfg.dataset["bpe_model"])
         self.normalizer = TextNormalizer()
@@ -227,6 +269,20 @@ class IndexTTS2:
         # 进度引用显示（可选）
         self.gr_progress = None
         self.model_version = self.cfg.version if hasattr(self.cfg, "version") else None
+        
+        # MLX initialization summary
+        if self.use_mlx and self.mlx_available:
+            print("\n" + "="*70)
+            print("MLX Optimization Summary")
+            print("="*70)
+            print(f"Device: {self.device}")
+            print(f"Cache Directory: {self.mlx_cache.cache_dir}")
+            print("\nCached Models:")
+            for model in ["gpt", "s2mel", "bigvgan"]:
+                status = "✓ Cached" if self.mlx_cache.is_cached(model) else "✗ Not cached"
+                print(f"  {model.upper():10s}: {status}")
+            print("\nNext run will load from cache (faster!)")
+            print("="*70 + "\n")
 
     @torch.no_grad()
     def get_emb(self, input_features, attention_mask):

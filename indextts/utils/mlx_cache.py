@@ -40,13 +40,14 @@ class MLXModelCache:
         cache_path = self.get_cache_path(model_name)
         return os.path.exists(cache_path)
     
-    def convert_and_cache(self, model_name, pytorch_checkpoint_path):
+    def convert_and_cache(self, model_name, pytorch_checkpoint_path=None, state_dict=None):
         """
         Convert PyTorch checkpoint to MLX format and cache it.
         
         Args:
             model_name: Name of the model (for cache key)
-            pytorch_checkpoint_path: Path to PyTorch .pth file
+            pytorch_checkpoint_path: Path to PyTorch .pth file (optional if state_dict provided)
+            state_dict: Direct state dict (optional if pytorch_checkpoint_path provided)
             
         Returns:
             Path to cached MLX model, or None if conversion failed
@@ -57,28 +58,34 @@ class MLXModelCache:
             print(f"\n{'='*70}")
             print(f"Converting {model_name.upper()} to MLX Format")
             print(f"{'='*70}")
-            print(f"Source: {pytorch_checkpoint_path}")
             
             start_time = time.time()
             
-            # Load PyTorch checkpoint
-            print(">> Loading PyTorch checkpoint...")
-            checkpoint = torch.load(pytorch_checkpoint_path, map_location='cpu')
-            
-            # Extract state dict (handle different formats)
-            if 'model' in checkpoint:
-                state_dict = checkpoint['model']
-                print(">> Format: Standard (model key)")
-            elif 'net' in checkpoint:
-                # S2MEL format - flatten nested structure
-                print(">> Format: S2MEL (net key)")
-                state_dict = {}
-                for key in checkpoint['net']:
-                    for param_name, param_value in checkpoint['net'][key].items():
-                        state_dict[f"{key}.{param_name}"] = param_value
+            # Get state dict
+            if state_dict is None:
+                if pytorch_checkpoint_path is None:
+                    raise ValueError("Either pytorch_checkpoint_path or state_dict must be provided")
+                
+                print(f"Source: {pytorch_checkpoint_path}")
+                print(">> Loading PyTorch checkpoint...")
+                checkpoint = torch.load(pytorch_checkpoint_path, map_location='cpu')
+                
+                # Extract state dict (handle different formats)
+                if 'model' in checkpoint:
+                    state_dict = checkpoint['model']
+                    print(">> Format: Standard (model key)")
+                elif 'net' in checkpoint:
+                    # S2MEL format - flatten nested structure
+                    print(">> Format: S2MEL (net key)")
+                    state_dict = {}
+                    for key in checkpoint['net']:
+                        for param_name, param_value in checkpoint['net'][key].items():
+                            state_dict[f"{key}.{param_name}"] = param_value
+                else:
+                    state_dict = checkpoint
+                    print(">> Format: Direct state dict")
             else:
-                state_dict = checkpoint
-                print(">> Format: Direct state dict")
+                print("Source: Provided state_dict")
             
             # Statistics
             num_params = len(state_dict)
