@@ -38,7 +38,7 @@ import torch.nn.functional as F
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
-            use_cuda_kernel=None,use_deepspeed=False
+            use_cuda_kernel=None,use_deepspeed=False, use_mlx=False
     ):
         """
         Args:
@@ -48,11 +48,32 @@ class IndexTTS2:
             device (str): device to use (e.g., 'cuda:0', 'cpu'). If None, it will be set automatically based on the availability of CUDA or MPS.
             use_cuda_kernel (None | bool): whether to use BigVGan custom fused activation CUDA kernel, only for CUDA device.
             use_deepspeed (bool): whether to use DeepSpeed or not.
+            use_mlx (bool): whether to enable MLX optimizations for Apple Silicon M4.
         """
+        # MLX optimization mode for Apple Silicon M4
+        self.use_mlx = use_mlx
+        self.mlx_available = False
+        
+        if use_mlx:
+            from indextts.utils.mlx_utils import check_mlx_available
+            self.mlx_available = check_mlx_available()
+            if self.mlx_available:
+                print(">> MLX optimizations enabled for Apple Silicon M4")
+                print(">> Using MPS backend with float32 for optimal performance")
+            else:
+                print(">> MLX not available, using standard mode")
+                self.use_mlx = False
+        
         if device is not None:
             self.device = device
             self.use_fp16 = False if device == "cpu" else use_fp16
             self.use_cuda_kernel = use_cuda_kernel is not None and use_cuda_kernel and device.startswith("cuda")
+        elif self.use_mlx:
+            # MLX mode: Force MPS backend for Apple Silicon M4 optimization
+            self.device = "mps"
+            self.use_fp16 = False  # Float32 performs better on MPS
+            self.use_cuda_kernel = False
+            print(">> MLX mode: Using MPS backend optimized for Apple Silicon M4")
         elif torch.cuda.is_available():
             self.device = "cuda:0"
             self.use_fp16 = use_fp16

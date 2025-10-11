@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--fp16", action="store_true", default=False, help="Use FP16 for inference if available")
     parser.add_argument("-f", "--force", action="store_true", default=False, help="Force to overwrite the output file if it exists")
     parser.add_argument("-d", "--device", type=str, default=None, help="Device to run the model on (cpu, cuda, mps, xpu)." )
+    parser.add_argument("--mlx", action="store_true", default=False, help="Enable MLX optimizations for Apple Silicon M4")
     args = parser.parse_args()
     if len(args.text.strip()) == 0:
         print("ERROR: Text is empty.")
@@ -56,10 +57,16 @@ def main():
             args.fp16 = False # Disable FP16 on CPU
             print("WARNING: Running on CPU may be slow.")
 
-    # TODO: Add CLI support for IndexTTS2.
-    from indextts.infer import IndexTTS
-    tts = IndexTTS(cfg_path=args.config, model_dir=args.model_dir, use_fp16=args.fp16, device=args.device)
-    tts.infer(audio_prompt=args.voice, text=args.text.strip(), output_path=output_path)
+    # Use IndexTTS2 for full feature support
+    from indextts.infer_v2 import IndexTTS2
+    tts = IndexTTS2(
+        cfg_path=args.config,
+        model_dir=args.model_dir,
+        use_fp16=args.fp16,
+        device=args.device,
+        use_mlx=args.mlx
+    )
+    tts.infer(spk_audio_prompt=args.voice, text=args.text.strip(), output_path=output_path)
 
 if __name__ == "__main__":
     main()
