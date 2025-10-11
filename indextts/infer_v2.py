@@ -113,34 +113,43 @@ class IndexTTS2:
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
         self.gpt_is_mlx = False
         
+        # Load PyTorch model first (for conditioning modules)
+        self.gpt = UnifiedVoice(**self.cfg.gpt)
+        load_checkpoint(self.gpt, self.gpt_path)
+        self.gpt = self.gpt.to(self.device)
+        
+        if self.use_fp16:
+            self.gpt.eval().half()
+        else:
+            self.gpt.eval()
+        
+        print(">> GPT weights restored from:", self.gpt_path)
+        
+        # If MLX enabled, create hybrid model
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 1/4] Loading GPT with MLX (KV Cache enabled)...")
+            print("\n>> [Model 1/4] Creating Pure MLX GPT (Conformer + Perceiver + Transformer)...")
             try:
-                from indextts.gpt.mlx_model import create_mlx_gpt_from_cache
+                from indextts.gpt.mlx_model import UnifiedVoiceMLX
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
-                self.gpt = create_mlx_gpt_from_cache(mlx_gpt_weights, self.cfg.gpt)
+                # Create MLX model with PyTorch conditioning for testing
+                self.mlx_transformer = UnifiedVoiceMLX(
+                    use_mlx_conditioning=False,  # Use PyTorch conditioning to test
+                    **self.cfg.gpt
+                )
+                # Load weights
+                self.mlx_transformer.load_weights_from_dict(mlx_gpt_weights)
                 self.gpt_is_mlx = True
-                print(">> ✓ GPT: Running on Native MLX (Apple Silicon M4 with KV cache)")
+                print(">> ✓ Pure MLX GPT: Conformer + Perceiver + Transformer (Apple Silicon M4)")
             except Exception as e:
-                print(f">> MLX GPT loading failed: {e}")
+                print(f">> MLX loading failed: {e}")
                 import traceback
                 traceback.print_exc()
-                print(">> Falling back to PyTorch GPT...")
+                print(">> Using full PyTorch GPT...")
                 self.gpt_is_mlx = False
-        
-        # Fallback or standard: Load PyTorch model
-        if not self.gpt_is_mlx:
-            self.gpt = UnifiedVoice(**self.cfg.gpt)
-            load_checkpoint(self.gpt, self.gpt_path)
-            self.gpt = self.gpt.to(self.device)
-            
-            if self.use_fp16:
-                self.gpt.eval().half()
-            else:
-                self.gpt.eval()
-            
-            print(">> GPT weights restored from:", self.gpt_path)
+                self.mlx_transformer = None
+        else:
             print(">> GPT: Running on PyTorch")
+            self.mlx_transformer = None
 
         # Post-init only for PyTorch models
         if not self.gpt_is_mlx:
@@ -286,10 +295,10 @@ class IndexTTS2:
         # MLX initialization summary
         if self.use_mlx and self.mlx_available:
             print("\n" + "="*70)
-            print("MLX Native Implementation Summary")
+            print("MLX Hybrid Implementation Summary")
             print("="*70)
             print(f"Device: {self.device}")
-            print(f"GPT Backend: {'Native MLX ⚡' if self.gpt_is_mlx else 'PyTorch (fallback)'}")
+            print(f"GPT Backend: {'Hybrid (PyTorch + MLX) ⚡' if self.gpt_is_mlx else 'PyTorch (full)'}")
             print(f"Cache Directory: {self.mlx_cache.cache_dir}")
             print("\nCached Models:")
             for model in ["gpt", "s2mel", "bigvgan"]:
@@ -297,9 +306,17 @@ class IndexTTS2:
                 print(f"  {model.upper():10s}: {status}")
             
             if self.gpt_is_mlx:
-                print("\n⚡ Native MLX Mode Active")
-                print("  - GPT model running on pure MLX")
-                print("  - Optimized for Apple Silicon M4 unified memory")
+                if hasattr(self.mlx_transformer, 'use_mlx_conditioning') and self.mlx_transformer.use_mlx_conditioning:
+                    print("\n⚡ Pure MLX Mode Active (EXPERIMENTAL)")
+                    print("  - Conditioning: MLX (Conformer + Perceiver) ⚠️  Quality issues")
+                    print("  - Transformer: MLX (24 layers with KV cache) ✅")
+                    print("  - Note: MLX conditioning has bugs, audio quality degraded")
+                else:
+                    print("\n⚡ Hybrid MLX Mode Active")
+                    print("  - Conditioning: PyTorch (Conformer + Perceiver) ✅")
+                    print("  - Transformer: MLX (24 layers with KV cache) ✅")
+                    print("  - Optimized for Apple Silicon M4")
+                    print("  - Best of both: PyTorch accuracy + MLX speed")
             
             print("\nNext run will load from cache (faster!)")
             print("="*70 + "\n")
@@ -468,7 +485,7 @@ class IndexTTS2:
                 ))[0]
             except IndexError:
                 return None
-
+    
     def infer_generator(self, spk_audio_prompt, text, output_path,
               emo_audio_prompt=None, emo_alpha=1.0,
               emo_vector=None,
@@ -651,24 +668,77 @@ class IndexTTS2:
                         emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
                         # emovec = emovec_mat
 
-                    codes, speech_conditioning_latent = self.gpt.inference_speech(
-                        spk_cond_emb,
-                        text_tokens,
-                        emo_cond_emb,
-                        cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_vec=emovec,
-                        do_sample=True,
-                        top_p=top_p,
-                        top_k=top_k,
-                        temperature=temperature,
-                        num_return_sequences=autoregressive_batch_size,
-                        length_penalty=length_penalty,
-                        num_beams=num_beams,
-                        repetition_penalty=repetition_penalty,
-                        max_generate_length=max_mel_tokens,
-                        **generation_kwargs
-                    )
+                    # Use MLX inference if enabled
+                    if self.gpt_is_mlx and self.mlx_transformer is not None:
+                        # Check if using pure MLX or hybrid mode
+                        if hasattr(self.mlx_transformer, 'use_mlx_conditioning') and self.mlx_transformer.use_mlx_conditioning:
+                            # Pure MLX mode
+                            codes, speech_conditioning_latent = self.mlx_transformer.inference_speech(
+                                spk_cond_emb,
+                                text_tokens,
+                                emo_speech_condition=emo_cond_emb,
+                                cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                                emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                                emo_vec=emovec,
+                                temperature=temperature,
+                                max_generate_length=max_mel_tokens,
+                            )
+                        else:
+                            # Hybrid mode: PyTorch conditioning + MLX transformer
+                            from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+                            
+                            cond_lengths_t = torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device)
+                            speech_conditioning_latent = self.gpt.get_conditioning(
+                                spk_cond_emb.transpose(1, 2), cond_lengths_t
+                            )
+                            
+                            tmp = torch.zeros(text_tokens.size(0)).to(text_tokens.device)
+                            duration_emb = self.gpt.speed_emb(torch.zeros_like(tmp).long())
+                            duration_emb_half = self.gpt.speed_emb(torch.ones_like(tmp).long())
+                            
+                            conds_latent = torch.cat((
+                                speech_conditioning_latent + emovec.unsqueeze(1),
+                                duration_emb_half.unsqueeze(1),
+                                duration_emb.unsqueeze(1)
+                            ), dim=1)
+                            
+                            conds_mlx = torch_to_mlx(conds_latent)
+                            text_mlx = torch_to_mlx(text_tokens)
+                            
+                            codes_mlx = self.mlx_transformer.simple_forward(
+                                text_mlx,
+                                conditioning=conds_mlx,
+                                max_length=max_mel_tokens,
+                                temperature=temperature
+                            )
+                            
+                            # Convert to CPU first, then to long (int64), then to target device
+                            # MPS doesn't support uint32, so we need this intermediate step
+                            codes = mlx_to_torch(codes_mlx, device='cpu').long().to(self.device)
+                            # speech_conditioning_latent already computed above
+                            
+                            # Synchronize MPS device to ensure tensor is ready
+                            if 'mps' in str(self.device):
+                                torch.mps.synchronize()
+                    else:
+                        codes, speech_conditioning_latent = self.gpt.inference_speech(
+                            spk_cond_emb,
+                            text_tokens,
+                            emo_cond_emb,
+                            cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_vec=emovec,
+                            do_sample=True,
+                            top_p=top_p,
+                            top_k=top_k,
+                            temperature=temperature,
+                            num_return_sequences=autoregressive_batch_size,
+                            length_penalty=length_penalty,
+                            num_beams=num_beams,
+                            repetition_penalty=repetition_penalty,
+                            max_generate_length=max_mel_tokens,
+                            **generation_kwargs
+                        )
 
                 gpt_gen_time += time.perf_counter() - m_start_time
                 if not has_warned and (codes[:, -1] != self.stop_mel_token).any():

@@ -89,8 +89,17 @@ class MLXMultiHeadAttention(nn.Module):
         
         # Apply causal mask (GPT2 style: True=allowed, False=masked)
         if causal_mask is not None:
-            # Extract the relevant mask portion for current seq lengths
-            mask_slice = causal_mask[:, :, :seq_len, :kv_seq_len]
+            # When using KV cache (seq_len=1), we're at position kv_seq_len-1
+            # and can attend to all previous positions
+            if past_kv is not None and seq_len == 1:
+                # Current position is kv_seq_len - 1
+                current_pos = kv_seq_len - 1
+                # Extract mask for current position: can attend to positions [0, kv_seq_len)
+                mask_slice = causal_mask[:, :, current_pos:current_pos+1, :kv_seq_len]
+            else:
+                # No cache or full sequence: extract mask for all query positions
+                mask_slice = causal_mask[:, :, :seq_len, :kv_seq_len]
+            
             # Convert bool mask to attention mask: True -> 0.0, False -> -10000.0
             attn_mask = mx.where(mask_slice, 0.0, -10000.0)
             scores = scores + attn_mask
@@ -164,6 +173,8 @@ class UnifiedVoiceMLX(nn.Module):
     Full MLX GPT model with complete Transformer architecture.
     
     Includes all transformer layers for proper weight loading and inference.
+    Can optionally use pure MLX conditioning (Conformer + Perceiver) or accept
+    pre-computed conditioning from PyTorch.
     """
     
     def __init__(
@@ -175,6 +186,7 @@ class UnifiedVoiceMLX(nn.Module):
         number_mel_codes=8194,
         start_mel_token=8192,
         stop_mel_token=8193,
+        use_mlx_conditioning=True,  # NEW: Enable pure MLX conditioning
         **kwargs  # Accept extra args for compatibility
     ):
         """
@@ -188,6 +200,7 @@ class UnifiedVoiceMLX(nn.Module):
             number_mel_codes: Mel code vocabulary size
             start_mel_token: Start token for mel
             stop_mel_token: Stop token for mel
+            use_mlx_conditioning: If True, use pure MLX conditioning pipeline
         """
         super().__init__()
         
@@ -197,6 +210,27 @@ class UnifiedVoiceMLX(nn.Module):
         self.number_mel_codes = number_mel_codes
         self.start_mel_token = start_mel_token
         self.stop_mel_token = stop_mel_token
+        self.use_mlx_conditioning = use_mlx_conditioning
+        
+        # Pure MLX conditioning (Conformer + Perceiver)
+        if use_mlx_conditioning:
+            from indextts.gpt.mlx_conditioning import MLXConditioningModule
+            self.conditioning_module = MLXConditioningModule(
+                input_dim=1024,  # Speaker embedding dimension
+                model_dim=model_dim,
+                num_latents=32,  # Output 32 conditioning latents
+                conformer_layers=4,  # Balanced: 4 layers for quality vs speed
+                perceiver_depth=2    # Standard depth
+            )
+            print(">> MLX: Using pure MLX conditioning (Conformer + Perceiver)")
+        else:
+            self.conditioning_module = None
+        
+        # Speed embeddings (for duration control)
+        self.speed_emb = MLXEmbedding(2, model_dim)
+        
+        # Emotion layer (for emotion vector processing)
+        self.emo_layer = nn.Linear(model_dim, model_dim)
         
         # Core embeddings
         self.text_embedding = MLXEmbedding(number_text_tokens + 1, model_dim)
@@ -427,9 +461,13 @@ class UnifiedVoiceMLX(nn.Module):
         start_token_ids = mx.full((batch_size, 1), self.start_mel_token, dtype=mx.int32)
         start_token_emb = self.mel_embedding(start_token_ids)  # (B, 1, D)
         
-        # Add mel position encoding for position 0
+        # CRITICAL: Track absolute position in sequence for position encoding
+        context_len = context.shape[1]  # Length of conditioning + text
+        
+        # Add mel position encoding for start_mel_token at absolute position context_len
         # PyTorch uses mel_pos_embedding for mel tokens, returns (1, dim) without batch
-        start_token_emb = start_token_emb + self.mel_pos_embedding.weight[0:1]  # (B, 1, D) + (1, D)
+        start_pos = context_len
+        start_token_emb = start_token_emb + self.mel_pos_embedding.weight[start_pos:start_pos+1]  # (B, 1, D) + (1, D)
         
         # Full initial sequence: [context] + [start_mel_token]
         sequence = mx.concatenate([context, start_token_emb], axis=1)
@@ -439,6 +477,7 @@ class UnifiedVoiceMLX(nn.Module):
         
         print(f">> [MLX] Starting autoregressive loop with KV cache (max_length={max_length})...")
         print(f"   Initial sequence: {sequence.shape[1]} tokens (context={context.shape[1]} + start_token=1)")
+        print(f"   Start token position: {start_pos}")
         
         # First pass: process full context (including start_mel_token) and initialize KV cache
         hidden = sequence
@@ -454,7 +493,11 @@ class UnifiedVoiceMLX(nn.Module):
         temperature = kwargs.get('temperature', 0.8)
         if temperature > 0:
             logits = logits / temperature
-        next_token = mx.argmax(logits, axis=-1)
+        
+        # Sample from the distribution (like PyTorch)
+        probs = mx.softmax(logits[0, 0], axis=-1)
+        next_token_id = mx.random.categorical(mx.log(probs + 1e-10))
+        next_token = mx.array([[next_token_id]])
         
         token_val = int(next_token[0, 0])
         print(f">> [MLX] First token: {token_val}")
@@ -475,10 +518,11 @@ class UnifiedVoiceMLX(nn.Module):
             # Embed only the new token
             next_emb = self.mel_embedding(next_token)  # (B, 1, D)
             
-            # Add mel position encoding for current position
-            # Position step corresponds to mel position step (0-indexed from start_mel_token)
-            if step < self.mel_pos_embedding.weight.shape[0]:
-                mel_pos_enc = self.mel_pos_embedding.weight[step:step+1]  # (1, D)
+            # CRITICAL: Add mel position encoding using ABSOLUTE position in sequence
+            # Current absolute position = context_len + step (step=0 was start_token, step=1 is first generated, etc.)
+            absolute_pos = context_len + step
+            if absolute_pos < self.mel_pos_embedding.weight.shape[0]:
+                mel_pos_enc = self.mel_pos_embedding.weight[absolute_pos:absolute_pos+1]  # (1, D)
                 next_emb = next_emb + mel_pos_enc  # (B, 1, D) + (1, D)
             
             # Apply transformer with KV cache (much faster!)
@@ -487,6 +531,11 @@ class UnifiedVoiceMLX(nn.Module):
             for i, block in enumerate(self.transformer_blocks):
                 hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=past_kvs[i], use_cache=True)
                 new_past_kvs.append(kv)
+            
+            # DEBUG: Check KV cache size
+            if new_past_kvs:
+                kv_cache_size = new_past_kvs[0][0].shape[2]  # K's sequence dimension
+            
             past_kvs = new_past_kvs
             
             hidden = self.final_norm(hidden)
@@ -496,10 +545,15 @@ class UnifiedVoiceMLX(nn.Module):
             if temperature > 0:
                 logits = logits / temperature
             
-            next_token = mx.argmax(logits, axis=-1)  # (B, 1)
+            # Sample from the distribution instead of argmax (like PyTorch)
+            probs = mx.softmax(logits[0, 0], axis=-1)  # (vocab,)
+            next_token_id = mx.random.categorical(mx.log(probs + 1e-10))  # Sample
+            next_token = mx.array([[next_token_id]])  # (1, 1)
             
             # Check stop token
             token_val = int(next_token[0, 0])
+            
+            
             if token_val == self.stop_mel_token:
                 print(f"\n>> [MLX] Hit stop token at step {step}")
                 break
@@ -688,6 +742,31 @@ class UnifiedVoiceMLX(nn.Module):
         print(f">> [MLX Native] merge_emovec: {out.shape}")
         return out
     
+    def get_conditioning_mlx(self, speech_features, lengths=None):
+        """
+        Get conditioning latents using pure MLX conditioning pipeline.
+        
+        Args:
+            speech_features: Speaker features (batch, 1024, time) or MLX array (batch, time, 1024)
+            lengths: Sequence lengths (batch,) or MLX array
+        
+        Returns:
+            Conditioning latents (batch, 32, model_dim) as MLX array
+        """
+        if not self.use_mlx_conditioning:
+            raise RuntimeError("MLX conditioning not enabled. Set use_mlx_conditioning=True in __init__")
+        
+        # Ensure correct format: (batch, time, features)
+        if isinstance(speech_features, mx.array):
+            if speech_features.shape[-1] != 1024:
+                # Assume it's (batch, 1024, time), transpose to (batch, time, 1024)
+                speech_features = speech_features.transpose(0, 2, 1)
+        
+        # Run through Conformer + Perceiver
+        latents = self.conditioning_module(speech_features, lengths)
+        
+        return latents  # (batch, 32, model_dim)
+    
     def inference_speech(
         self,
         speech_condition,
@@ -700,11 +779,11 @@ class UnifiedVoiceMLX(nn.Module):
         **kwargs
     ):
         """
-        Main inference method matching model_v2.py logic.
+        Main inference method with pure MLX conditioning.
         
         Args:
-            speech_condition: Semantic features (b, 1024, time)
-            text_inputs: Text tokens (b, L)
+            speech_condition: Semantic features (b, 1024, time) PyTorch or (b, time, 1024) MLX
+            text_inputs: Text tokens (b, L) PyTorch or MLX
             emo_speech_condition: Emotion semantic features
             cond_lengths, emo_cond_lengths: Lengths tensors
             emo_vec: Pre-computed emotion vector
@@ -717,7 +796,7 @@ class UnifiedVoiceMLX(nn.Module):
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         import torch
         
-        print(">> [MLX Native] Running inference_speech (full implementation)")
+        print(">> [MLX Native] Running pure MLX inference with Conformer + Perceiver")
         
         # Handle dimensions
         if speech_condition.ndim == 2:
@@ -729,41 +808,48 @@ class UnifiedVoiceMLX(nn.Module):
         if emo_cond_lengths is None:
             emo_cond_lengths = torch.tensor([emo_speech_condition.shape[-1]], device=speech_condition.device)
         
-        # Get conditioning latents (matches model_v2.py line 684)
-        speech_conditioning_latent = self.get_conditioning(
-            speech_condition.transpose(1, 2), cond_lengths
-        )
+        # Convert to MLX for pure MLX conditioning
+        speech_condition_mlx = torch_to_mlx(speech_condition.cpu())
+        if speech_condition_mlx.ndim == 3 and speech_condition_mlx.shape[1] == 1024:
+            speech_condition_mlx = speech_condition_mlx.transpose(0, 2, 1)  # (b, 1024, t) -> (b, t, 1024)
         
-        # Get emotion vector (matches model_v2.py lines 686-689)
+        emo_speech_condition_mlx = torch_to_mlx(emo_speech_condition.cpu())
+        if emo_speech_condition_mlx.ndim == 3 and emo_speech_condition_mlx.shape[1] == 1024:
+            emo_speech_condition_mlx = emo_speech_condition_mlx.transpose(0, 2, 1)
+        
+        cond_lengths_mlx = torch_to_mlx(cond_lengths.cpu()) if cond_lengths is not None else None
+        
+        # Get conditioning latents using PURE MLX (Conformer + Perceiver)
+        print('>> [MLX] Running Conformer + Perceiver for speech conditioning...')
+        speech_conditioning_latent_mlx = self.get_conditioning_mlx(speech_condition_mlx, cond_lengths_mlx)
+        
+        # Get emotion vector
         if emo_vec is None:
-            print('>> [MLX] Computing emotion vector')
-            emo_vec_syn_ori = self.get_emo_conditioning(
-                emo_speech_condition.transpose(1, 2), emo_cond_lengths
-            )
-            # Apply emovec and emo layers
-            emo_vec_syn_ori_mlx = torch_to_mlx(emo_vec_syn_ori)
-            emo_vec_syn = self.emovec_layer(emo_vec_syn_ori_mlx)
-            emo_vec = self.emo_layer(emo_vec_syn)
-            emo_vec = mlx_to_torch(emo_vec, device='mps')
+            print('>> [MLX] Running Conformer + Perceiver for emotion conditioning...')
+            emo_conditioning_latent_mlx = self.get_conditioning_mlx(emo_speech_condition_mlx, cond_lengths_mlx)
+            # Average pool to get emotion vector
+            emo_vec_mlx = mx.mean(emo_conditioning_latent_mlx, axis=1)  # (b, model_dim)
+            emo_vec_mlx = self.emo_layer(emo_vec_mlx)
         else:
+            emo_vec_mlx = torch_to_mlx(emo_vec.cpu())
             print('>> [MLX] Using specified emotion vector')
         
-        # Prepare conditioning with speed embeddings (matches model_v2.py lines 693-696)
-        tmp = torch.zeros(text_inputs.size(0)).to(text_inputs.device)
-        duration_emb_mlx = self.speed_emb(torch_to_mlx(torch.zeros_like(tmp).long()))
-        duration_emb_half_mlx = self.speed_emb(torch_to_mlx(torch.ones_like(tmp).long()))
-        duration_emb = mlx_to_torch(duration_emb_mlx, device='mps')
-        duration_emb_half = mlx_to_torch(duration_emb_half_mlx, device='mps')
+        # Prepare conditioning with speed embeddings (pure MLX)
+        batch_size = speech_conditioning_latent_mlx.shape[0]
+        duration_emb_mlx = self.speed_emb(mx.zeros((batch_size,), dtype=mx.int32))
+        duration_emb_half_mlx = self.speed_emb(mx.ones((batch_size,), dtype=mx.int32))
         
-        # Combine conditioning (matches line 696)
-        conds_latent = torch.cat((
-            speech_conditioning_latent + emo_vec.unsqueeze(1),
-            duration_emb_half.unsqueeze(1),
-            duration_emb.unsqueeze(1)
-        ), dim=1)
+        # Combine conditioning (pure MLX)
+        speech_cond_with_emo = speech_conditioning_latent_mlx + emo_vec_mlx.reshape(batch_size, 1, -1)
+        conds_mlx = mx.concatenate([
+            speech_cond_with_emo,
+            duration_emb_half_mlx.reshape(batch_size, 1, -1),
+            duration_emb_mlx.reshape(batch_size, 1, -1)
+        ], axis=1)  # (b, 34, model_dim)
         
-        # Convert to MLX for generation
-        conds_mlx = torch_to_mlx(conds_latent)
+        print(f">> [MLX] Pure MLX conditioning shape: {conds_mlx.shape}")
+        
+        # Convert text to MLX
         text_mlx = torch_to_mlx(text_inputs)
         
         # Generate codes using full transformer
@@ -777,11 +863,12 @@ class UnifiedVoiceMLX(nn.Module):
         print(f">> [MLX] Generation complete")
         
         # Convert to PyTorch with correct dtype
-        codes = mlx_to_torch(codes_mlx, device='cpu').long().to('mps')
+        codes = mlx_to_torch(codes_mlx, device='cpu').long().to(speech_condition.device)
+        speech_conditioning_latent_torch = mlx_to_torch(speech_conditioning_latent_mlx, device=speech_condition.device)
         
-        print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens")
+        print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens with pure MLX conditioning")
         
-        return codes, speech_conditioning_latent
+        return codes, speech_conditioning_latent_torch
 
 
 def create_mlx_gpt_from_cache(mlx_cache_dict, config):
