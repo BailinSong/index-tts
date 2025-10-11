@@ -614,17 +614,24 @@ class MLXConditioningModule(nn.Module):
     
     This replaces the PyTorch conditioning pipeline with a pure MLX implementation.
     
+    Architecture matches PyTorch:
+        - Conformer: input_dim (1024) → conformer_dim (512)
+        - Perceiver: conformer_dim (512) → model_dim (1280) via proj_context
+        - Output: (batch, num_latents=32, model_dim=1280)
+    
     Args:
         input_dim: Input dimension (1024 for speaker embeddings)
-        model_dim: Model dimension (1280 for IndexTTS2)
+        conformer_dim: Conformer output dimension (512 to match PyTorch)
+        model_dim: Final model dimension (1280 for IndexTTS2)
         num_latents: Number of output latents (32 for IndexTTS2)
-        conformer_layers: Number of Conformer layers
-        perceiver_depth: Depth of Perceiver Resampler
+        conformer_layers: Number of Conformer layers (6)
+        perceiver_depth: Depth of Perceiver Resampler (2)
     """
     
     def __init__(
         self,
         input_dim: int = 1024,
+        conformer_dim: int = 512,  # ← Changed to match PyTorch!
         model_dim: int = 1280,
         num_latents: int = 32,
         conformer_layers: int = 6,
@@ -632,15 +639,18 @@ class MLXConditioningModule(nn.Module):
     ):
         super().__init__()
         
+        # Conformer: 1024 → 512 (matches PyTorch)
         self.conformer = MLXConformerEncoder(
             input_dim=input_dim,
-            output_dim=model_dim,
+            output_dim=conformer_dim,  # 512
             num_layers=conformer_layers
         )
         
+        # Perceiver: 512 → 1280 (with proj_context)
         self.perceiver = MLXPerceiverResampler(
-            dim=model_dim,
+            dim=model_dim,  # 1280
             depth=perceiver_depth,
+            dim_context=conformer_dim,  # 512 from Conformer
             num_latents=num_latents
         )
     

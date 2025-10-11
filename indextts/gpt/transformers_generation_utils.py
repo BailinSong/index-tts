@@ -61,21 +61,42 @@ from transformers.utils import (
 )
 from transformers.generation.beam_constraints import DisjunctiveConstraint, PhrasalConstraint
 from transformers.generation.beam_search import BeamScorer, BeamSearchScorer, ConstrainedBeamSearchScorer
-from transformers.generation.candidate_generator import (
-    AssistedCandidateGenerator,
-    AssistedCandidateGeneratorDifferentTokenizers,
-    CandidateGenerator,
-    PromptLookupCandidateGenerator,
-    _crop_past_key_values,
-    _prepare_attention_mask,
-    _prepare_token_type_ids,
-)
-from transformers.generation.configuration_utils import (
-    NEED_SETUP_CACHE_CLASSES_MAPPING,
-    QUANT_BACKEND_CLASSES_MAPPING,
-    GenerationConfig,
-    GenerationMode,
-)
+try:
+    from transformers.generation.candidate_generator import (
+        AssistedCandidateGenerator,
+        AssistedCandidateGeneratorDifferentTokenizers,
+        CandidateGenerator,
+        PromptLookupCandidateGenerator,
+        _crop_past_key_values,
+        _prepare_attention_mask,
+        _prepare_token_type_ids,
+    )
+except ImportError:
+    # Fallback for older transformers versions
+    from transformers.generation.candidate_generator import (
+        CandidateGenerator,
+    )
+    AssistedCandidateGenerator = None
+    AssistedCandidateGeneratorDifferentTokenizers = None
+    PromptLookupCandidateGenerator = None
+    _crop_past_key_values = None
+    _prepare_attention_mask = None
+    _prepare_token_type_ids = None
+try:
+    from transformers.generation.configuration_utils import (
+        NEED_SETUP_CACHE_CLASSES_MAPPING,
+        QUANT_BACKEND_CLASSES_MAPPING,
+        GenerationConfig,
+        GenerationMode,
+    )
+except ImportError:
+    # Fallback for older transformers versions
+    from transformers.generation.configuration_utils import (
+        GenerationConfig,
+        GenerationMode,
+    )
+    NEED_SETUP_CACHE_CLASSES_MAPPING = {}
+    QUANT_BACKEND_CLASSES_MAPPING = {}
 from transformers.generation.logits_process import (
     EncoderNoRepeatNGramLogitsProcessor,
     EncoderRepetitionPenaltyLogitsProcessor,

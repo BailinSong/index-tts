@@ -216,13 +216,14 @@ class UnifiedVoiceMLX(nn.Module):
         if use_mlx_conditioning:
             from indextts.gpt.mlx_conditioning import MLXConditioningModule
             self.conditioning_module = MLXConditioningModule(
-                input_dim=1024,  # Speaker embedding dimension
-                model_dim=model_dim,
-                num_latents=32,  # Output 32 conditioning latents
-                conformer_layers=4,  # Balanced: 4 layers for quality vs speed
-                perceiver_depth=2    # Standard depth
+                input_dim=1024,         # Speaker embedding dimension
+                conformer_dim=512,      # Conformer output (matches PyTorch)
+                model_dim=model_dim,    # 1280
+                num_latents=32,         # Output 32 conditioning latents
+                conformer_layers=6,     # 6 layers (matches PyTorch)
+                perceiver_depth=2       # 2 layers (matches PyTorch)
             )
-            print(">> MLX: Using pure MLX conditioning (Conformer + Perceiver)")
+            print(">> MLX: Using pure MLX conditioning (Conformer 512D + Perceiver 1280D)")
         else:
             self.conditioning_module = None
         
@@ -422,7 +423,228 @@ class UnifiedVoiceMLX(nn.Module):
                 block.mlp_proj.bias = mlx_weights[mlp_proj_bias]
                 loaded += 1
         
-        print(f">> Loaded {loaded} weight tensors from MLX cache (including {self.layers} transformer layers)")
+        # Load conditioning weights if using MLX conditioning
+        if self.use_mlx_conditioning and self.conditioning_module is not None:
+            print("\n>> Loading MLX Conditioning weights...")
+            cond_loaded = self._load_conditioning_weights(mlx_weights)
+            loaded += cond_loaded
+            print(f">> Loaded {cond_loaded} conditioning weights")
+        
+        print(f">> Loaded {loaded} weight tensors total from MLX cache")
+        return loaded
+    
+    def _load_conditioning_weights(self, weights):
+        """Load Conformer and Perceiver weights from PyTorch checkpoint"""
+        loaded = 0
+        
+        # Load Perceiver weights (simpler, do first)
+        loaded += self._load_perceiver_weights(weights)
+        
+        # Load Conformer weights (more complex)
+        loaded += self._load_conformer_weights(weights)
+        
+        return loaded
+    
+    def _load_perceiver_weights(self, weights):
+        """Load Perceiver Resampler weights"""
+        loaded = 0
+        perceiver = self.conditioning_module.perceiver
+        
+        # Latents
+        if 'perceiver_encoder.latents' in weights:
+            perceiver.latents = weights['perceiver_encoder.latents']
+            loaded += 1
+        
+        # proj_context (512 → 1280)
+        if 'perceiver_encoder.proj_context.weight' in weights:
+            perceiver.proj_context.weight = weights['perceiver_encoder.proj_context.weight']
+            loaded += 1
+        if 'perceiver_encoder.proj_context.bias' in weights:
+            perceiver.proj_context.bias = weights['perceiver_encoder.proj_context.bias']
+            loaded += 1
+        
+        # Perceiver layers (2 layers)
+        for layer_idx in range(2):
+            layer = perceiver.layers[layer_idx]
+            attn, ff = layer  # (attention, feed-forward)
+            
+            prefix = f"perceiver_encoder.layers.{layer_idx}"
+            
+            # Attention
+            if f"{prefix}.0.to_q.weight" in weights:
+                attn.to_q.weight = weights[f"{prefix}.0.to_q.weight"]
+                loaded += 1
+            if f"{prefix}.0.to_kv.weight" in weights:
+                attn.to_kv.weight = weights[f"{prefix}.0.to_kv.weight"]
+                loaded += 1
+            if f"{prefix}.0.to_out.weight" in weights:
+                attn.to_out.weight = weights[f"{prefix}.0.to_out.weight"]
+                loaded += 1
+            
+            # Feed-forward (GEGLU)
+            if f"{prefix}.1.0.weight" in weights:
+                ff.net[0].weight = weights[f"{prefix}.1.0.weight"]
+                loaded += 1
+            if f"{prefix}.1.0.bias" in weights:
+                ff.net[0].bias = weights[f"{prefix}.1.0.bias"]
+                loaded += 1
+            if f"{prefix}.1.2.weight" in weights:
+                ff.net[2].weight = weights[f"{prefix}.1.2.weight"]
+                loaded += 1
+            if f"{prefix}.1.2.bias" in weights:
+                ff.net[2].bias = weights[f"{prefix}.1.2.bias"]
+                loaded += 1
+        
+        # Final norm (RMSNorm uses 'scale' instead of 'weight')
+        if 'perceiver_encoder.norm.gamma' in weights:
+            perceiver.norm.scale = weights['perceiver_encoder.norm.gamma']
+            loaded += 1
+        
+        return loaded
+    
+    def _load_conformer_weights(self, weights):
+        """Load Conformer Encoder weights"""
+        loaded = 0
+        conformer = self.conditioning_module.conformer
+        
+        # Input projection
+        # Note: input_proj is nn.Sequential([Linear, LayerNorm])
+        # Access via .layers[0] for the Linear layer
+        if 'conditioning_encoder.embed.out.0.weight' in weights:
+            # PyTorch: (512, 261632) - this is huge, probably includes conv
+            # MLX: (512, 1024) - just linear
+            # We'll take the first 1024 columns
+            pt_weight = weights['conditioning_encoder.embed.out.0.weight']
+            if pt_weight.shape[1] >= 1024:
+                conformer.input_proj.layers[0].weight = pt_weight[:, :1024]
+                loaded += 1
+        
+        if 'conditioning_encoder.embed.out.0.bias' in weights:
+            conformer.input_proj.layers[0].bias = weights['conditioning_encoder.embed.out.0.bias']
+            loaded += 1
+        
+        # Position encoding
+        if 'conditioning_encoder.embed.pos_enc.pe' in weights:
+            pe = weights['conditioning_encoder.embed.pos_enc.pe']  # (1, 5000, 512)
+            conformer.pos_encoding = pe.squeeze(0)[:1000]  # Take first 1000, remove batch dim
+            loaded += 1
+        
+        # Conformer blocks (6 layers)
+        for layer_idx in range(6):
+            block = conformer.blocks[layer_idx]
+            prefix = f"conditioning_encoder.encoders.{layer_idx}"
+            
+            # Self-attention
+            if f"{prefix}.self_attn.linear_q.weight" in weights:
+                block.attn.q_proj.weight = weights[f"{prefix}.self_attn.linear_q.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_q.bias" in weights:
+                block.attn.q_proj.bias = weights[f"{prefix}.self_attn.linear_q.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_k.weight" in weights:
+                block.attn.k_proj.weight = weights[f"{prefix}.self_attn.linear_k.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_k.bias" in weights:
+                block.attn.k_proj.bias = weights[f"{prefix}.self_attn.linear_k.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_v.weight" in weights:
+                block.attn.v_proj.weight = weights[f"{prefix}.self_attn.linear_v.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_v.bias" in weights:
+                block.attn.v_proj.bias = weights[f"{prefix}.self_attn.linear_v.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_out.weight" in weights:
+                block.attn.out_proj.weight = weights[f"{prefix}.self_attn.linear_out.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_out.bias" in weights:
+                block.attn.out_proj.bias = weights[f"{prefix}.self_attn.linear_out.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_pos.weight" in weights:
+                block.attn.pos_proj.weight = weights[f"{prefix}.self_attn.linear_pos.weight"]
+                loaded += 1
+            
+            # Feed-forward (w_1, w_2)
+            # Note: ff_macaron is Sequential([LayerNorm, Linear, SiLU, Linear])
+            if f"{prefix}.feed_forward.w_1.weight" in weights:
+                # Assign to ff_macaron (first FF in macaron style)
+                block.ff_macaron.layers[1].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_1.bias" in weights:
+                block.ff_macaron.layers[1].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_2.weight" in weights:
+                block.ff_macaron.layers[3].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_2.bias" in weights:
+                block.ff_macaron.layers[3].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
+                loaded += 1
+            
+            # Convolution module
+            if f"{prefix}.conv_module.pointwise_conv1.weight" in weights:
+                w = weights[f"{prefix}.conv_module.pointwise_conv1.weight"]  # (1024, 512, 1)
+                block.conv.pointwise1.weight = w.squeeze(-1)  # Remove kernel dim: (1024, 512)
+                loaded += 1
+            if f"{prefix}.conv_module.pointwise_conv1.bias" in weights:
+                block.conv.pointwise1.bias = weights[f"{prefix}.conv_module.pointwise_conv1.bias"]
+                loaded += 1
+            
+            if f"{prefix}.conv_module.depthwise_conv.weight" in weights:
+                w = weights[f"{prefix}.conv_module.depthwise_conv.weight"]  # (512, 1, 15)
+                block.conv.depthwise.weight = w.squeeze(1)  # Remove middle dim: (512, 15)
+                loaded += 1
+            if f"{prefix}.conv_module.depthwise_conv.bias" in weights:
+                block.conv.depthwise.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
+                loaded += 1
+            
+            if f"{prefix}.conv_module.pointwise_conv2.weight" in weights:
+                w = weights[f"{prefix}.conv_module.pointwise_conv2.weight"]  # (512, 512, 1)
+                block.conv.pointwise2.weight = w.squeeze(-1)  # (512, 512)
+                loaded += 1
+            if f"{prefix}.conv_module.pointwise_conv2.bias" in weights:
+                block.conv.pointwise2.bias = weights[f"{prefix}.conv_module.pointwise_conv2.bias"]
+                loaded += 1
+            
+            if f"{prefix}.conv_module.norm.weight" in weights:
+                block.conv.bn.weight = weights[f"{prefix}.conv_module.norm.weight"]
+                loaded += 1
+            if f"{prefix}.conv_module.norm.bias" in weights:
+                block.conv.bn.bias = weights[f"{prefix}.conv_module.norm.bias"]
+                loaded += 1
+            
+            # Layer norms
+            if f"{prefix}.norm_mha.weight" in weights:
+                block.norm_attn.weight = weights[f"{prefix}.norm_mha.weight"]
+                loaded += 1
+            if f"{prefix}.norm_mha.bias" in weights:
+                block.norm_attn.bias = weights[f"{prefix}.norm_mha.bias"]
+                loaded += 1
+            if f"{prefix}.norm_conv.weight" in weights:
+                block.norm_conv.weight = weights[f"{prefix}.norm_conv.weight"]
+                loaded += 1
+            if f"{prefix}.norm_conv.bias" in weights:
+                block.norm_conv.bias = weights[f"{prefix}.norm_conv.bias"]
+                loaded += 1
+            if f"{prefix}.norm_ff.weight" in weights:
+                block.ff.layers[0].weight = weights[f"{prefix}.norm_ff.weight"]
+                loaded += 1
+            if f"{prefix}.norm_ff.bias" in weights:
+                block.ff.layers[0].bias = weights[f"{prefix}.norm_ff.bias"]
+                loaded += 1
+            if f"{prefix}.norm_final.weight" in weights:
+                block.norm_final.weight = weights[f"{prefix}.norm_final.weight"]
+                loaded += 1
+            if f"{prefix}.norm_final.bias" in weights:
+                block.norm_final.bias = weights[f"{prefix}.norm_final.bias"]
+                loaded += 1
+        
+        # Final norm
+        if 'conditioning_encoder.after_norm.weight' in weights:
+            conformer.norm.weight = weights['conditioning_encoder.after_norm.weight']
+            loaded += 1
+        if 'conditioning_encoder.after_norm.bias' in weights:
+            conformer.norm.bias = weights['conditioning_encoder.after_norm.bias']
+            loaded += 1
+        
         return loaded
     
     def simple_forward(self, text_tokens, conditioning=None, max_length=1500, **kwargs):

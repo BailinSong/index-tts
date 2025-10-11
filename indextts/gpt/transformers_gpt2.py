@@ -32,7 +32,17 @@ import transformers
 
 from indextts.gpt.transformers_generation_utils import GenerationMixin
 from indextts.gpt.transformers_modeling_utils import PreTrainedModel
-from transformers.modeling_utils import SequenceSummary
+try:
+    from transformers.modeling_utils import SequenceSummary
+except ImportError:
+    # Fallback for newer transformers versions where SequenceSummary was moved/removed
+    # Define a placeholder for GPT2DoubleHeadsModel (not used in IndexTTS)
+    class SequenceSummary(nn.Module):
+        def __init__(self, config):
+            super().__init__()
+            self.summary = nn.Identity()
+        def forward(self, hidden_states, cls_index=None):
+            return hidden_states[:, -1]
 
 from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask_for_sdpa, _prepare_4d_causal_attention_mask_for_sdpa
 from transformers.modeling_outputs import (
