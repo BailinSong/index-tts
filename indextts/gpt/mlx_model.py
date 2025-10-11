@@ -172,6 +172,35 @@ class UnifiedVoiceMLX(nn.Module):
         
         return codes
     
+    def __call__(self, *args, **kwargs):
+        """
+        Make model callable for compatibility with PyTorch code.
+        
+        Delegates to simple_forward or returns dummy output based on usage.
+        """
+        # If called with inputs_embeds (typical PyTorch usage)
+        if 'inputs_embeds' in kwargs:
+            # Return dummy output for compatibility
+            inputs_embeds = kwargs['inputs_embeds']
+            from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+            
+            # Simple pass-through for now
+            inputs_mlx = torch_to_mlx(inputs_embeds)
+            hidden = self.final_norm(inputs_mlx)
+            
+            # Convert back
+            hidden_torch = mlx_to_torch(hidden, device='mps')
+            
+            # Return format compatible with PyTorch GPT
+            class DummyOutput:
+                def __init__(self, hidden):
+                    self.last_hidden_state = hidden
+            
+            return DummyOutput(hidden_torch)
+        
+        # Default: call simple_forward
+        return self.simple_forward(*args, **kwargs)
+    
     # Methods required for inference compatibility with PyTorch version
     # These are simplified implementations that allow inference to proceed
     
