@@ -229,12 +229,16 @@ class UnifiedVoiceMLX(nn.Module):
             max_length=kwargs.get('max_generate_length', 1500)
         )
         
-        # Convert back to PyTorch
-        codes = mlx_to_torch(codes_mlx, device='mps')
-        conditioning_latent = mlx_to_torch(conditioning, device='mps')
+        # Convert back to PyTorch (to CPU first to handle dtype conversion)
+        codes = mlx_to_torch(codes_mlx, device='cpu')
+        conditioning_latent = mlx_to_torch(conditioning, device='cpu')
         
-        # Ensure correct dtype
+        # Ensure correct dtype (int64/long) before moving to MPS
         codes = codes.long()
+        
+        # Now move to MPS device
+        codes = codes.to('mps')
+        conditioning_latent = conditioning_latent.to('mps')
         
         print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens")
         
