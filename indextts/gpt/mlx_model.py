@@ -55,13 +55,13 @@ class MLXMultiHeadAttention(nn.Module):
         self.v_proj = MLXLinear(embed_dim, embed_dim)
         self.out_proj = MLXLinear(embed_dim, embed_dim)
     
-    def __call__(self, x, mask=None, past_kv=None, use_cache=False):
+    def __call__(self, x, causal_mask=None, past_kv=None, use_cache=False):
         """
         Multi-head attention with KV caching support.
         
         Args:
             x: Input (batch, seq_len, embed_dim)
-            mask: Optional attention mask
+            causal_mask: Optional causal attention bias (bool array, True=allowed, False=masked)
             past_kv: Tuple of (past_key, past_value) cache
             use_cache: If True, return updated (key, value) cache
         
@@ -77,16 +77,23 @@ class MLXMultiHeadAttention(nn.Module):
         v = self.v_proj(x).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         
         # Use cached K, V if available (for autoregressive generation)
+        kv_seq_len = k.shape[2]
         if past_kv is not None:
             past_k, past_v = past_kv
             k = mx.concatenate([past_k, k], axis=2)  # Concat along seq dimension
             v = mx.concatenate([past_v, v], axis=2)
+            kv_seq_len = k.shape[2]
         
         # Attention scores
         scores = (q @ k.transpose(0, 1, 3, 2)) * self.scale
         
-        if mask is not None:
-            scores = scores + mask
+        # Apply causal mask (GPT2 style: True=allowed, False=masked)
+        if causal_mask is not None:
+            # Extract the relevant mask portion for current seq lengths
+            mask_slice = causal_mask[:, :, :seq_len, :kv_seq_len]
+            # Convert bool mask to attention mask: True -> 0.0, False -> -10000.0
+            attn_mask = mx.where(mask_slice, 0.0, -10000.0)
+            scores = scores + attn_mask
         
         # Softmax and apply to values
         attn_weights = mx.softmax(scores, axis=-1)
@@ -117,12 +124,13 @@ class MLXTransformerBlock(nn.Module):
         self.mlp_fc = MLXLinear(embed_dim, embed_dim * 4)
         self.mlp_proj = MLXLinear(embed_dim * 4, embed_dim)
     
-    def __call__(self, x, past_kv=None, use_cache=False):
+    def __call__(self, x, causal_mask=None, past_kv=None, use_cache=False):
         """
         Transformer block forward with KV caching.
         
         Args:
             x: Input tensor
+            causal_mask: Optional causal attention mask
             past_kv: Cached (key, value) from previous step
             use_cache: Whether to return updated cache
             
@@ -131,7 +139,7 @@ class MLXTransformerBlock(nn.Module):
             cache: Updated (key, value) if use_cache=True
         """
         # Self-attention with residual
-        attn_out = self.attn(self.ln_1(x), past_kv=past_kv, use_cache=use_cache)
+        attn_out = self.attn(self.ln_1(x), causal_mask=causal_mask, past_kv=past_kv, use_cache=use_cache)
         
         if use_cache:
             attn_out, new_kv = attn_out
@@ -139,9 +147,11 @@ class MLXTransformerBlock(nn.Module):
         else:
             x = x + attn_out
         
-        # Feed-forward with residual and GELU activation
+        # Feed-forward with residual and NewGELU activation
         h = self.mlp_fc(self.ln_2(x))
-        h = mx.maximum(0.5 * h * (1 + mx.tanh(math.sqrt(2 / math.pi) * (h + 0.044715 * h ** 3))), 0)  # GELU approx
+        # NewGELU: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+        # NOTE: Can produce small negative values, don't clip to 0!
+        h = 0.5 * h * (1 + mx.tanh(math.sqrt(2 / math.pi) * (h + 0.044715 * h ** 3)))
         x = x + self.mlp_proj(h)
         
         if use_cache:
@@ -222,8 +232,17 @@ class UnifiedVoiceMLX(nn.Module):
         # Normalization
         self.final_norm = nn.LayerNorm(model_dim)
         
+        # Create causal attention mask (GPT2 style)
+        # Maximum sequence length for mask (must be >= max context length in training)
+        max_positions = 2420  # Match PyTorch GPT2 default
+        # Create lower triangular matrix: True for allowed positions, False for masked
+        causal_mask = mx.tril(mx.ones((max_positions, max_positions), dtype=mx.bool_))
+        # Add batch and head dimensions: (1, 1, max_pos, max_pos)
+        self.causal_mask = causal_mask.reshape(1, 1, max_positions, max_positions)
+        
         print(f">> Initialized UnifiedVoiceMLX (full transformer, layers={layers}, dim={model_dim}, heads={heads})")
         print(f"   Conditioning: {self.cond_num} latents, Positional: mel={max_mel_tokens}, text={max_text_tokens}")
+        print(f"   Causal mask: {max_positions}x{max_positions} (GPT2 style)")
     
     def load_weights_from_dict(self, mlx_weights):
         """
@@ -425,7 +444,7 @@ class UnifiedVoiceMLX(nn.Module):
         hidden = sequence
         past_kvs = []
         for block in self.transformer_blocks:
-            hidden, kv = block(hidden, past_kv=None, use_cache=True)
+            hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=None, use_cache=True)
             past_kvs.append(kv)
         hidden = self.final_norm(hidden)
         
@@ -466,7 +485,7 @@ class UnifiedVoiceMLX(nn.Module):
             hidden = next_emb
             new_past_kvs = []
             for i, block in enumerate(self.transformer_blocks):
-                hidden, kv = block(hidden, past_kv=past_kvs[i], use_cache=True)
+                hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=past_kvs[i], use_cache=True)
                 new_past_kvs.append(kv)
             past_kvs = new_past_kvs
             
