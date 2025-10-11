@@ -114,20 +114,17 @@ class IndexTTS2:
         self.gpt_is_mlx = False
         
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 1/4] Loading GPT with MLX Native Implementation...")
+            print("\n>> [Model 1/4] Loading GPT with MLX (KV Cache enabled)...")
             try:
                 from indextts.gpt.mlx_model import create_mlx_gpt_from_cache
-                
-                # Get or convert GPT weights to MLX format
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
-                
-                # Create native MLX model
                 self.gpt = create_mlx_gpt_from_cache(mlx_gpt_weights, self.cfg.gpt)
                 self.gpt_is_mlx = True
-                
-                print(">> ✓ GPT: Running on Native MLX (Apple Silicon M4)")
+                print(">> ✓ GPT: Running on Native MLX (Apple Silicon M4 with KV cache)")
             except Exception as e:
                 print(f">> MLX GPT loading failed: {e}")
+                import traceback
+                traceback.print_exc()
                 print(">> Falling back to PyTorch GPT...")
                 self.gpt_is_mlx = False
         
