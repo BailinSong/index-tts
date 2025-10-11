@@ -303,18 +303,82 @@ class MLXRelativeMultiHeadAttention(nn.Module):
         return self.out_proj(out)
 
 
-class MLXConvolutionModule(nn.Module):
+class MLXDepthwiseConv1d(nn.Module):
     """
-    Simplified convolution module for Conformer (using Linear instead of Conv).
+    Depthwise 1D Convolution for MLX.
+    Each input channel is convolved with its own kernel.
     """
     
-    def __init__(self, channels: int, kernel_size: int = 15):
+    def __init__(self, channels: int, kernel_size: int, padding: int = 0):
+        super().__init__()
+        self.channels = channels
+        self.kernel_size = kernel_size
+        self.padding = padding
+        
+        # Weight: one kernel per channel (channels, kernel_size)
+        self.weight = mx.random.normal((channels, kernel_size)) * 0.02
+        self.bias = mx.zeros((channels,))
+    
+    def __call__(self, x):
+        """
+        Args:
+            x: (batch, seq, channels)
+        Returns:
+            out: (batch, seq_out, channels)
+        """
+        batch, seq, channels = x.shape
+        
+        # Apply padding
+        if self.padding > 0:
+            pad_config = [(0, 0), (self.padding, self.padding), (0, 0)]
+            x = mx.pad(x, pad_config)
+            seq = seq + 2 * self.padding
+        
+        seq_out = seq - self.kernel_size + 1
+        
+        # Sliding window convolution
+        outputs = []
+        for i in range(seq_out):
+            window = x[:, i:i+self.kernel_size, :]  # (batch, kernel_size, channels)
+            weight_broadcast = self.weight.T.reshape(1, self.kernel_size, channels)
+            out_i = mx.sum(window * weight_broadcast, axis=1)  # (batch, channels)
+            outputs.append(out_i)
+        
+        out = mx.stack(outputs, axis=1)  # (batch, seq_out, channels)
+        return out + self.bias
+
+
+class MLXConvolutionModule(nn.Module):
+    """
+    Conformer Convolution Module with proper depthwise separable convolution.
+    
+    Architecture:
+        1. LayerNorm
+        2. Pointwise expansion with GLU
+        3. Depthwise convolution
+        4. BatchNorm (LayerNorm in MLX)
+        5. Swish activation
+        6. Pointwise projection
+    """
+    
+    def __init__(self, channels: int, kernel_size: int = 31):
         super().__init__()
         
-        # Simplified: use linear layers instead of convolutions
-        self.expand = nn.Linear(channels, 2 * channels)
-        self.project = nn.Linear(channels, channels)
+        # Layer normalization
         self.norm = nn.LayerNorm(channels)
+        
+        # Pointwise expansion (for GLU: 2x channels)
+        self.pointwise1 = nn.Linear(channels, 2 * channels)
+        
+        # Depthwise convolution
+        padding = kernel_size // 2
+        self.depthwise = MLXDepthwiseConv1d(channels, kernel_size, padding)
+        
+        # Batch normalization (use LayerNorm)
+        self.bn = nn.LayerNorm(channels)
+        
+        # Pointwise projection
+        self.pointwise2 = nn.Linear(channels, channels)
     
     def __call__(self, x, mask_pad=None):
         """
@@ -325,24 +389,32 @@ class MLXConvolutionModule(nn.Module):
         Returns:
             Output (batch, seq, channels)
         """
-        # Pointwise expansion + GLU
-        expanded = self.expand(x)  # (batch, seq, 2*channels)
-        x, gate = mx.split(expanded, 2, axis=-1)
-        x = x * nn.sigmoid(gate)  # GLU
-        
-        # Normalize and activate (swish = SiLU in MLX)
+        # Layer norm
         x = self.norm(x)
-        x = nn.silu(x)
         
-        # Project back
-        x = self.project(x)
+        # Pointwise expansion
+        x = self.pointwise1(x)  # (batch, seq, 2*channels)
         
-        # Mask padding if needed
+        # GLU: split and gate
+        x1, x2 = mx.split(x, 2, axis=-1)
+        x = x1 * nn.sigmoid(x2)  # (batch, seq, channels)
+        
+        # Depthwise convolution
+        x = self.depthwise(x)
+        
+        # Batch norm
+        x = self.bn(x)
+        
+        # Swish activation
+        x = x * nn.sigmoid(x)
+        
+        # Pointwise projection
+        x = self.pointwise2(x)
+        
+        # Apply mask if provided
         if mask_pad is not None:
-            # mask_pad is (batch, 1, 1, seq_len), x is (batch, seq_len, channels)
-            # Need to squeeze and transpose mask
             mask_squeezed = mask_pad.squeeze(1).squeeze(1)  # (batch, seq_len)
-            mask_expanded = mask_squeezed.reshape(mask_squeezed.shape[0], mask_squeezed.shape[1], 1)  # (batch, seq_len, 1)
+            mask_expanded = mask_squeezed.reshape(mask_squeezed.shape[0], mask_squeezed.shape[1], 1)
             x = x * mask_expanded
         
         return x

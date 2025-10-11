@@ -131,9 +131,9 @@ class IndexTTS2:
             try:
                 from indextts.gpt.mlx_model import UnifiedVoiceMLX
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
-                # Create MLX model with PyTorch conditioning for testing
+                # Create MLX model with PURE MLX conditioning (Conformer + Perceiver)
                 self.mlx_transformer = UnifiedVoiceMLX(
-                    use_mlx_conditioning=False,  # Use PyTorch conditioning to test
+                    use_mlx_conditioning=True,  # ✓ Pure MLX!
                     **self.cfg.gpt
                 )
                 # Load weights

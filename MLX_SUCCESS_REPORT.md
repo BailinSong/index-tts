@@ -230,3 +230,4 @@ python -m indextts.cli "你的文本" -v your_voice.wav --force
 **状态**: ✅ Production Ready
 **下一步**: 优化性能，探索纯MLX实现
 
+
