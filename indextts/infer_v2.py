@@ -109,38 +109,54 @@ class IndexTTS2:
 
         self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
 
-        # Load GPT model with MLX caching if enabled
+        # Load GPT model with MLX native implementation if enabled
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
+        self.gpt_is_mlx = False
         
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 1/4] Loading GPT with MLX optimization...")
-            # Convert and cache GPT model in MLX format
-            mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
-            print(">> MLX GPT weights ready")
-        
-        # Load PyTorch model (architecture still uses PyTorch for Phase 1)
-        self.gpt = UnifiedVoice(**self.cfg.gpt)
-        load_checkpoint(self.gpt, self.gpt_path)
-        self.gpt = self.gpt.to(self.device)
-        
-        # MLX mode: Use float32 for better MPS performance
-        if self.use_fp16 and not self.use_mlx:
-            self.gpt.eval().half()
-        else:
-            self.gpt.eval()
-        
-        print(">> GPT weights restored from:", self.gpt_path)
-        if self.use_mlx:
-            print(">> GPT: Running on MPS with MLX optimizations")
-
-        if use_deepspeed:
+            print("\n>> [Model 1/4] Loading GPT with MLX Native Implementation...")
             try:
-                import deepspeed
-            except (ImportError, OSError, CalledProcessError) as e:
-                use_deepspeed = False
-                print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
+                from indextts.gpt.mlx_model import create_mlx_gpt_from_cache
+                
+                # Get or convert GPT weights to MLX format
+                mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
+                
+                # Create native MLX model
+                self.gpt = create_mlx_gpt_from_cache(mlx_gpt_weights, self.cfg.gpt)
+                self.gpt_is_mlx = True
+                
+                print(">> ✓ GPT: Running on Native MLX (Apple Silicon M4)")
+            except Exception as e:
+                print(f">> MLX GPT loading failed: {e}")
+                print(">> Falling back to PyTorch GPT...")
+                self.gpt_is_mlx = False
+        
+        # Fallback or standard: Load PyTorch model
+        if not self.gpt_is_mlx:
+            self.gpt = UnifiedVoice(**self.cfg.gpt)
+            load_checkpoint(self.gpt, self.gpt_path)
+            self.gpt = self.gpt.to(self.device)
+            
+            if self.use_fp16:
+                self.gpt.eval().half()
+            else:
+                self.gpt.eval()
+            
+            print(">> GPT weights restored from:", self.gpt_path)
+            print(">> GPT: Running on PyTorch")
 
-        self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
+        # Post-init only for PyTorch models
+        if not self.gpt_is_mlx:
+            if use_deepspeed:
+                try:
+                    import deepspeed
+                except (ImportError, OSError, CalledProcessError) as e:
+                    use_deepspeed = False
+                    print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
+
+            self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
+        else:
+            print(">> MLX GPT: Skipping PyTorch-specific post-init")
 
         if self.use_cuda_kernel:
             # preload the CUDA kernel for BigVGAN
@@ -273,14 +289,21 @@ class IndexTTS2:
         # MLX initialization summary
         if self.use_mlx and self.mlx_available:
             print("\n" + "="*70)
-            print("MLX Optimization Summary")
+            print("MLX Native Implementation Summary")
             print("="*70)
             print(f"Device: {self.device}")
+            print(f"GPT Backend: {'Native MLX ⚡' if self.gpt_is_mlx else 'PyTorch (fallback)'}")
             print(f"Cache Directory: {self.mlx_cache.cache_dir}")
             print("\nCached Models:")
             for model in ["gpt", "s2mel", "bigvgan"]:
                 status = "✓ Cached" if self.mlx_cache.is_cached(model) else "✗ Not cached"
                 print(f"  {model.upper():10s}: {status}")
+            
+            if self.gpt_is_mlx:
+                print("\n⚡ Native MLX Mode Active")
+                print("  - GPT model running on pure MLX")
+                print("  - Optimized for Apple Silicon M4 unified memory")
+            
             print("\nNext run will load from cache (faster!)")
             print("="*70 + "\n")
 
