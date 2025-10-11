@@ -207,20 +207,27 @@ class UnifiedVoiceMLX(nn.Module):
             
             return DummyOutput(hidden_torch)
         
-        # If called with positional args, extract what we need
-        # PyTorch version: gpt(speech_latent, cond_emb, emo_cond, ...)
-        # We only care about text tokens for generation
-        if len(args) >= 2:
-            # Assume second argument might be text-related
-            # For now, return a dummy latent
-            batch_size = 1
-            seq_len = 32
+        # If called with positional args for latent extraction
+        # PyTorch version: gpt(speech_latent, text_tokens, text_lens, codes, code_lens, ...)
+        # Returns latent that should match codes length
+        if len(args) >= 4:
+            # args[3] should be codes
+            codes = args[3]
+            
+            # Get batch size and sequence length from codes
+            batch_size = codes.shape[0]
+            seq_len = codes.shape[1]  # Match codes length!
+            
+            # Return latent with matching shape
             latent = mx.zeros((batch_size, seq_len, self.model_dim))
-            return mlx_to_torch(latent, device='mps')
+            latent_torch = mlx_to_torch(latent, device='mps')
+            
+            print(f">> [MLX Native] Returning latent with shape {latent_torch.shape} to match codes")
+            return latent_torch
         
         # Fallback: ignore all and return dummy
         batch_size = 1
-        seq_len = 32
+        seq_len = 1
         latent = mx.zeros((batch_size, seq_len, self.model_dim))
         return mlx_to_torch(latent, device='mps')
     
