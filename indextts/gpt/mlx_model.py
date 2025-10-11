@@ -123,18 +123,26 @@ class UnifiedVoiceMLX(nn.Module):
         print(f">> Loaded {loaded} weight tensors from MLX cache")
         return loaded
     
-    def simple_forward(self, text_tokens, conditioning, max_length=1500):
+    def simple_forward(self, text_tokens, conditioning=None, max_length=1500, **kwargs):
         """
         Simplified forward pass for generation.
+        
+        Accepts extra kwargs for compatibility with PyTorch version.
         
         Args:
             text_tokens: Text token IDs (batch, text_len) - MLX array
             conditioning: Conditioning latent (batch, cond_len, model_dim) - MLX array
             max_length: Maximum mel tokens to generate
+            **kwargs: Extra arguments (ignored for compatibility)
             
         Returns:
             Generated mel codes (batch, mel_len) - MLX array
         """
+        # Create default conditioning if not provided
+        if conditioning is None:
+            batch_size = text_tokens.shape[0]
+            cond_len = 32
+            conditioning = mx.zeros((batch_size, cond_len, self.model_dim))
         # Get text embeddings
         text_emb = self.text_embedding(text_tokens)  # (B, T, D)
         
