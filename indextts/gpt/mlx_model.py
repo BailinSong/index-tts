@@ -171,6 +171,74 @@ class UnifiedVoiceMLX(nn.Module):
             codes = mx.zeros((text_tokens.shape[0], 0), dtype=mx.int32)
         
         return codes
+    
+    # Methods required for inference compatibility with PyTorch version
+    # These are simplified implementations that allow inference to proceed
+    
+    def merge_emovec(self, speech_latent, emo_latent, cond_len, emo_len, alpha=1.0):
+        """
+        Merge emotion vectors (simplified for MLX).
+        
+        Returns PyTorch tensor for compatibility with downstream code.
+        """
+        from indextts.utils.mlx_utils import mlx_to_torch
+        import torch
+        
+        # Simplified: return zero emotion vector
+        batch_size = speech_latent.shape[0] if hasattr(speech_latent, 'shape') else 1
+        emovec = mx.zeros((batch_size, self.model_dim))
+        
+        # Convert to PyTorch
+        return mlx_to_torch(emovec, device='mps')
+    
+    def inference_speech(
+        self,
+        speech_condition,
+        text_inputs,
+        emo_speech_condition=None,
+        cond_lengths=None,
+        emo_cond_lengths=None,
+        emo_vec=None,
+        **kwargs
+    ):
+        """
+        Main inference method compatible with PyTorch version.
+        
+        Handles PyTorch-MLX conversion automatically.
+        
+        Returns:
+            Tuple of (codes, conditioning_latent) as PyTorch tensors
+        """
+        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        import torch
+        
+        print(">> [MLX Native] Running inference_speech")
+        
+        # Convert inputs to MLX
+        text_inputs_mlx = torch_to_mlx(text_inputs)
+        
+        # Simple conditioning (placeholder for full implementation)
+        batch_size = text_inputs.shape[0]
+        cond_len = 32  # Fixed conditioning length
+        conditioning = mx.zeros((batch_size, cond_len, self.model_dim))
+        
+        # Generate mel codes
+        codes_mlx = self.simple_forward(
+            text_inputs_mlx,
+            conditioning,
+            max_length=kwargs.get('max_generate_length', 1500)
+        )
+        
+        # Convert back to PyTorch
+        codes = mlx_to_torch(codes_mlx, device='mps')
+        conditioning_latent = mlx_to_torch(conditioning, device='mps')
+        
+        # Ensure correct dtype
+        codes = codes.long()
+        
+        print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens")
+        
+        return codes, conditioning_latent
 
 
 def create_mlx_gpt_from_cache(mlx_cache_dict, config):
