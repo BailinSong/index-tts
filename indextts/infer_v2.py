@@ -126,20 +126,23 @@ class IndexTTS2:
         print(">> GPT weights restored from:", self.gpt_path)
         
         # If MLX enabled, create hybrid model
+        # 🔴 CRITICAL FIX: Pure MLX Conditioning has severe bugs (max_diff=90, correlation=0.05)
+        # Temporarily using Hybrid Mode: PyTorch Conditioning + MLX Transformer
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 1/4] Creating Pure MLX GPT (Conformer + Perceiver + Transformer)...")
+            print("\n>> [Model 1/4] Creating Hybrid MLX GPT (PyTorch Cond + MLX Transformer)...")
             try:
                 from indextts.gpt.mlx_model import UnifiedVoiceMLX
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
-                # Create MLX model with PURE MLX conditioning (Conformer + Perceiver)
+                # Create MLX model with HYBRID mode
                 self.mlx_transformer = UnifiedVoiceMLX(
-                    use_mlx_conditioning=True,  # ✓ Pure MLX!
+                    use_mlx_conditioning=False,  # 🔴 FIXED: Use PyTorch conditioning
                     **self.cfg.gpt
                 )
                 # Load weights
                 self.mlx_transformer.load_weights_from_dict(mlx_gpt_weights)
                 self.gpt_is_mlx = True
-                print(">> ✓ Pure MLX GPT: Conformer + Perceiver + Transformer (Apple Silicon M4)")
+                print(">> ✓ Hybrid MLX: PyTorch Conditioning + MLX Transformer")
+                print("   (Pure MLX Conditioning disabled: max_diff=90, speaker loss)")
             except Exception as e:
                 print(f">> MLX loading failed: {e}")
                 import traceback
