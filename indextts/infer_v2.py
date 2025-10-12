@@ -795,18 +795,25 @@ class IndexTTS2:
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
-                    diffusion_steps = 25
+                    diffusion_steps = 25  # Baseline: original 25 steps for quality comparison
                     inference_cfg_rate = 0.7
+                    
+                    # Profiling: gpt_layer
+                    t0 = time.perf_counter()
                     latent = self.s2mel.models['gpt_layer'](latent)
                     S_infer = self.semantic_codec.quantizer.vq2emb(codes.unsqueeze(1))
                     S_infer = S_infer.transpose(1, 2)
                     S_infer = S_infer + latent
                     target_lengths = (code_lens * 1.72).long()
-
+                    t_gpt_layer = time.perf_counter() - t0
+                    
+                    # Profiling: length_regulator
+                    t0 = time.perf_counter()
                     cond = self.s2mel.models['length_regulator'](S_infer,
                                                                  ylens=target_lengths,
                                                                  n_quantizers=3,
                                                                  f0=None)[0]
+                    t_length_reg = time.perf_counter() - t0
                     
                     # Fix batch dimension mismatch if needed
                     if cond.shape[0] != prompt_condition.shape[0]:
@@ -816,13 +823,20 @@ class IndexTTS2:
                             cond = cond[:prompt_condition.shape[0]]
                     
                     cat_condition = torch.cat([prompt_condition, cond], dim=1)
+                    
+                    # Profiling: CFM diffusion
+                    t0 = time.perf_counter()
                     vc_target = self.s2mel.models['cfm'].inference(cat_condition,
                                                                    torch.LongTensor([cat_condition.size(1)]).to(
                                                                        cond.device),
                                                                    ref_mel, style, None, diffusion_steps,
                                                                    inference_cfg_rate=inference_cfg_rate)
+                    t_cfm = time.perf_counter() - t0
                     vc_target = vc_target[:, :, ref_mel.size(-1):]
                     s2mel_time += time.perf_counter() - m_start_time
+                    
+                    # Print detailed profiling
+                    print(f">> S2MEL breakdown: gpt_layer={t_gpt_layer:.2f}s, length_reg={t_length_reg:.2f}s, cfm={t_cfm:.2f}s (steps={diffusion_steps})")
 
                     m_start_time = time.perf_counter()
                     wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)

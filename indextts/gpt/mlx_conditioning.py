@@ -250,7 +250,8 @@ class MLXPerceiverResampler(nn.Module):
 class MLXRelativeMultiHeadAttention(nn.Module):
     """
     Relative position multi-head attention for Conformer.
-    Simplified version focusing on core functionality.
+    Implements Transformer-XL style attention with learnable position biases.
+    Paper: https://arxiv.org/abs/1901.02860
     """
     
     def __init__(self, embed_dim: int, num_heads: int):
@@ -266,14 +267,19 @@ class MLXRelativeMultiHeadAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         
-        # Relative position encoding (simplified)
+        # Positional encoding projection (no bias)
         self.pos_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        
+        # ✅ NEW: Learnable position biases (content and position)
+        # These are used in matrix C and matrix D as described in Transformer-XL paper
+        self.pos_bias_u = mx.random.normal((self.num_heads, self.head_dim)) * 0.02
+        self.pos_bias_v = mx.random.normal((self.num_heads, self.head_dim)) * 0.02
     
     def __call__(self, x, pos_emb, mask=None):
         """
         Args:
             x: Input (batch, seq, embed_dim)
-            pos_emb: Positional embeddings (batch, seq, embed_dim)
+            pos_emb: Positional embeddings (batch, seq, embed_dim) or (seq, embed_dim)
             mask: Optional attention mask
         
         Returns:
@@ -281,13 +287,47 @@ class MLXRelativeMultiHeadAttention(nn.Module):
         """
         batch, seq_len, _ = x.shape
         
+        # Handle pos_emb broadcast if needed
+        if len(pos_emb.shape) == 2:
+            # pos_emb is (seq, embed_dim), broadcast to (batch, seq, embed_dim)
+            pos_emb = mx.broadcast_to(
+                pos_emb.reshape(1, seq_len, self.embed_dim),
+                (batch, seq_len, self.embed_dim)
+            )
+        
         # Project Q, K, V
+        # Shape: (batch, num_heads, seq_len, head_dim)
         q = self.q_proj(x).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         k = self.k_proj(x).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         v = self.v_proj(x).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         
-        # Compute attention scores
-        scores = (q @ k.transpose(0, 1, 3, 2)) * self.scale
+        # Project positional embeddings
+        # Shape: (batch, num_heads, seq_len, head_dim)
+        p = self.pos_proj(pos_emb).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        
+        # ✅ RELATIVE POSITIONAL ATTENTION (Transformer-XL style)
+        # Compute q + pos_bias_u and q + pos_bias_v
+        # pos_bias_u/v: (num_heads, head_dim) -> need to broadcast to (batch, num_heads, seq_len, head_dim)
+        pos_bias_u_broadcast = self.pos_bias_u.reshape(1, self.num_heads, 1, self.head_dim)
+        pos_bias_v_broadcast = self.pos_bias_v.reshape(1, self.num_heads, 1, self.head_dim)
+        
+        q_with_bias_u = q + pos_bias_u_broadcast  # (batch, num_heads, seq_len, head_dim)
+        q_with_bias_v = q + pos_bias_v_broadcast  # (batch, num_heads, seq_len, head_dim)
+        
+        # Matrix AC: content-based attention
+        # (batch, num_heads, seq_len, seq_len)
+        matrix_ac = q_with_bias_u @ k.transpose(0, 1, 3, 2)
+        
+        # Matrix BD: position-based attention
+        # (batch, num_heads, seq_len, seq_len)
+        matrix_bd = q_with_bias_v @ p.transpose(0, 1, 3, 2)
+        
+        # NOTE: PyTorch Conformer removed rel_shift() for speech recognition
+        # "Remove rel_shift since it is useless in speech recognition"
+        # So we don't apply rel_shift here
+        
+        # Combine and scale
+        scores = (matrix_ac + matrix_bd) * self.scale
         
         # Apply mask if provided
         if mask is not None:
@@ -365,7 +405,7 @@ class MLXConvolutionModule(nn.Module):
         super().__init__()
         
         # Layer normalization
-        self.norm = nn.LayerNorm(channels)
+        self.norm = nn.LayerNorm(channels, eps=1e-05)  # eps匹配PyTorch
         
         # Pointwise expansion (for GLU: 2x channels)
         self.pointwise1 = nn.Linear(channels, 2 * channels)
@@ -375,7 +415,7 @@ class MLXConvolutionModule(nn.Module):
         self.depthwise = MLXDepthwiseConv1d(channels, kernel_size, padding)
         
         # Batch normalization (use LayerNorm)
-        self.bn = nn.LayerNorm(channels)
+        self.bn = nn.LayerNorm(channels, eps=1e-05)  # eps匹配PyTorch
         
         # Pointwise projection
         self.pointwise2 = nn.Linear(channels, channels)
@@ -424,11 +464,11 @@ class MLXConformerBlock(nn.Module):
     """
     Conformer encoder block.
     
-    Architecture:
-        1. Feed-forward (macaron style, first half)
-        2. Multi-head self-attention with relative positional encoding
-        3. Convolution module
-        4. Feed-forward (second half)
+    Architecture (WITHOUT macaron style, matching PyTorch):
+        1. Multi-head self-attention with relative positional encoding
+        2. Convolution module
+        3. Feed-forward
+        4. Final norm
     """
     
     def __init__(
@@ -443,33 +483,23 @@ class MLXConformerBlock(nn.Module):
         
         ff_dim = dim * ff_mult
         
-        # ✅ FIX: LayerNorm 应该在外面，不在 Sequential 里面 (匹配 PyTorch)
-        # Macaron-style feed-forward (first half)
-        self.norm_ff_macaron = nn.LayerNorm(dim)
-        self.ff_macaron = nn.Sequential(
-            nn.Linear(dim, ff_dim),
-            nn.SiLU(),
-            nn.Linear(ff_dim, dim)
-        )
-        
         # Multi-head attention
-        self.norm_attn = nn.LayerNorm(dim)
+        self.norm_attn = nn.LayerNorm(dim, eps=1e-05)  # norm_mha in PyTorch, eps匹配
         self.attn = MLXRelativeMultiHeadAttention(dim, num_heads)
         
         # Convolution module
-        self.norm_conv = nn.LayerNorm(dim)
+        self.norm_conv = nn.LayerNorm(dim, eps=1e-05)  # eps匹配PyTorch
         self.conv = MLXConvolutionModule(dim, conv_kernel_size)
         
-        # Feed-forward (second half)
-        self.norm_ff = nn.LayerNorm(dim)
+        # Feed-forward (只有一个！)
+        self.norm_ff = nn.LayerNorm(dim, eps=1e-05)  # eps匹配PyTorch
         self.ff = nn.Sequential(
             nn.Linear(dim, ff_dim),
             nn.SiLU(),
             nn.Linear(ff_dim, dim)
         )
         
-        self.norm_final = nn.LayerNorm(dim)
-        self.ff_scale = 0.5  # Macaron style uses 0.5 scaling
+        self.norm_final = nn.LayerNorm(dim, eps=1e-05)  # eps匹配PyTorch
     
     def __call__(self, x, pos_emb, mask=None, mask_pad=None):
         """
@@ -482,32 +512,28 @@ class MLXConformerBlock(nn.Module):
         Returns:
             Output (batch, seq, dim)
         """
-        # ✅ FIX: 匹配 PyTorch 的残差连接顺序
-        # PyTorch: x = residual + scale * module(norm(x))
+        # ✅ FIXED: 匹配 PyTorch 的非 macaron 结构
+        # PyTorch (without macaron): Attention → Conv → FF → Final Norm
         
-        # 1. Macaron feed-forward (first half)
-        residual = x
-        x = self.norm_ff_macaron(x)  # ← Norm 在外面
-        x = residual + self.ff_scale * self.ff_macaron(x)  # ← 先 scale 再加
-        
-        # 2. Multi-head self-attention
+        # 1. Multi-head self-attention
         residual = x
         x = self.norm_attn(x)
         x = self.attn(x, pos_emb, mask)
-        x = residual + x  # ← 不做 scale
+        x = residual + x
         
-        # 3. Convolution module
+        # 2. Convolution module
         residual = x
         x = self.norm_conv(x)
         x = self.conv(x, mask_pad)
-        x = residual + x  # ← 不做 scale
+        x = residual + x
         
-        # 4. Feed-forward (second half)
+        # 3. Feed-forward
         residual = x
-        x = self.norm_ff(x)  # ← Norm 在外面
-        x = residual + self.ff_scale * self.ff(x)  # ← 先 scale 再加
+        x = self.norm_ff(x)
+        x = self.ff(x)
+        x = residual + x  # ← ff_scale = 1.0 (no macaron)
         
-        # 5. Final normalization
+        # 4. Final normalization
         x = self.norm_final(x)
         
         return x
@@ -567,7 +593,7 @@ class MLXConformerEncoder(nn.Module):
             )
         
         # Final norm (matches PyTorch after_norm)
-        self.after_norm = nn.LayerNorm(output_dim)
+        self.after_norm = nn.LayerNorm(output_dim, eps=1e-05)  # eps匹配PyTorch
     
     def __call__(self, x, lengths=None):
         """

@@ -571,20 +571,27 @@ class UnifiedVoiceMLX(nn.Module):
                 block.attn.pos_proj.weight = weights[f"{prefix}.self_attn.linear_pos.weight"]
                 loaded += 1
             
-            # ✅ FIX: Feed-forward (w_1, w_2)
-            # Note: ff_macaron is now Sequential([Linear, SiLU, Linear]) (LayerNorm moved out)
+            # ✅ NEW: Load Relative Positional Attention biases (Transformer-XL style)
+            if f"{prefix}.self_attn.pos_bias_u" in weights:
+                block.attn.pos_bias_u = weights[f"{prefix}.self_attn.pos_bias_u"]
+                loaded += 1
+            if f"{prefix}.self_attn.pos_bias_v" in weights:
+                block.attn.pos_bias_v = weights[f"{prefix}.self_attn.pos_bias_v"]
+                loaded += 1
+            
+            # ✅ FIXED: Feed-forward (只有一个 FF，不是 macaron style)
+            # PyTorch 只有 feed_forward，没有 feed_forward_macaron
             if f"{prefix}.feed_forward.w_1.weight" in weights:
-                # Assign to ff_macaron (first FF in macaron style)
-                block.ff_macaron.layers[0].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
+                block.ff.layers[0].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_1.bias" in weights:
-                block.ff_macaron.layers[0].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
+                block.ff.layers[0].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_2.weight" in weights:
-                block.ff_macaron.layers[2].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
+                block.ff.layers[2].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_2.bias" in weights:
-                block.ff_macaron.layers[2].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
+                block.ff.layers[2].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
                 loaded += 1
             
             # Convolution module
@@ -619,15 +626,7 @@ class UnifiedVoiceMLX(nn.Module):
                 block.conv.bn.bias = weights[f"{prefix}.conv_module.norm.bias"]
                 loaded += 1
             
-            # ✅ FIX: Layer norms (all moved outside Sequential)
-            # norm_ff_macaron (for macaron-style FF)
-            if f"{prefix}.norm_ff_macaron.weight" in weights:
-                block.norm_ff_macaron.weight = weights[f"{prefix}.norm_ff_macaron.weight"]
-                loaded += 1
-            if f"{prefix}.norm_ff_macaron.bias" in weights:
-                block.norm_ff_macaron.bias = weights[f"{prefix}.norm_ff_macaron.bias"]
-                loaded += 1
-            
+            # ✅ FIXED: Layer norms (PyTorch 没有 norm_ff_macaron)
             # norm_mha (for multi-head attention)
             if f"{prefix}.norm_mha.weight" in weights:
                 block.norm_attn.weight = weights[f"{prefix}.norm_mha.weight"]
