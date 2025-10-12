@@ -443,9 +443,10 @@ class MLXConformerBlock(nn.Module):
         
         ff_dim = dim * ff_mult
         
+        # ✅ FIX: LayerNorm 应该在外面，不在 Sequential 里面 (匹配 PyTorch)
         # Macaron-style feed-forward (first half)
+        self.norm_ff_macaron = nn.LayerNorm(dim)
         self.ff_macaron = nn.Sequential(
-            nn.LayerNorm(dim),
             nn.Linear(dim, ff_dim),
             nn.SiLU(),
             nn.Linear(ff_dim, dim)
@@ -460,8 +461,8 @@ class MLXConformerBlock(nn.Module):
         self.conv = MLXConvolutionModule(dim, conv_kernel_size)
         
         # Feed-forward (second half)
+        self.norm_ff = nn.LayerNorm(dim)
         self.ff = nn.Sequential(
-            nn.LayerNorm(dim),
             nn.Linear(dim, ff_dim),
             nn.SiLU(),
             nn.Linear(ff_dim, dim)
@@ -481,29 +482,32 @@ class MLXConformerBlock(nn.Module):
         Returns:
             Output (batch, seq, dim)
         """
+        # ✅ FIX: 匹配 PyTorch 的残差连接顺序
+        # PyTorch: x = residual + scale * module(norm(x))
+        
         # 1. Macaron feed-forward (first half)
         residual = x
-        x = self.ff_macaron(x) * self.ff_scale
-        x = x + residual
+        x = self.norm_ff_macaron(x)  # ← Norm 在外面
+        x = residual + self.ff_scale * self.ff_macaron(x)  # ← 先 scale 再加
         
         # 2. Multi-head self-attention
         residual = x
         x = self.norm_attn(x)
         x = self.attn(x, pos_emb, mask)
-        x = x + residual
+        x = residual + x  # ← 不做 scale
         
         # 3. Convolution module
         residual = x
         x = self.norm_conv(x)
         x = self.conv(x, mask_pad)
-        x = x + residual
+        x = residual + x  # ← 不做 scale
         
         # 4. Feed-forward (second half)
         residual = x
-        x = self.ff(x) * self.ff_scale
-        x = x + residual
+        x = self.norm_ff(x)  # ← Norm 在外面
+        x = residual + self.ff_scale * self.ff(x)  # ← 先 scale 再加
         
-        # Final layer norm
+        # 5. Final normalization
         x = self.norm_final(x)
         
         return x

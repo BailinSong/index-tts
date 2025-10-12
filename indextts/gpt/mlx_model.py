@@ -571,20 +571,20 @@ class UnifiedVoiceMLX(nn.Module):
                 block.attn.pos_proj.weight = weights[f"{prefix}.self_attn.linear_pos.weight"]
                 loaded += 1
             
-            # Feed-forward (w_1, w_2)
-            # Note: ff_macaron is Sequential([LayerNorm, Linear, SiLU, Linear])
+            # ✅ FIX: Feed-forward (w_1, w_2)
+            # Note: ff_macaron is now Sequential([Linear, SiLU, Linear]) (LayerNorm moved out)
             if f"{prefix}.feed_forward.w_1.weight" in weights:
                 # Assign to ff_macaron (first FF in macaron style)
-                block.ff_macaron.layers[1].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
+                block.ff_macaron.layers[0].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_1.bias" in weights:
-                block.ff_macaron.layers[1].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
+                block.ff_macaron.layers[0].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_2.weight" in weights:
-                block.ff_macaron.layers[3].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
+                block.ff_macaron.layers[2].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
                 loaded += 1
             if f"{prefix}.feed_forward.w_2.bias" in weights:
-                block.ff_macaron.layers[3].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
+                block.ff_macaron.layers[2].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
                 loaded += 1
             
             # Convolution module
@@ -619,25 +619,40 @@ class UnifiedVoiceMLX(nn.Module):
                 block.conv.bn.bias = weights[f"{prefix}.conv_module.norm.bias"]
                 loaded += 1
             
-            # Layer norms
+            # ✅ FIX: Layer norms (all moved outside Sequential)
+            # norm_ff_macaron (for macaron-style FF)
+            if f"{prefix}.norm_ff_macaron.weight" in weights:
+                block.norm_ff_macaron.weight = weights[f"{prefix}.norm_ff_macaron.weight"]
+                loaded += 1
+            if f"{prefix}.norm_ff_macaron.bias" in weights:
+                block.norm_ff_macaron.bias = weights[f"{prefix}.norm_ff_macaron.bias"]
+                loaded += 1
+            
+            # norm_mha (for multi-head attention)
             if f"{prefix}.norm_mha.weight" in weights:
                 block.norm_attn.weight = weights[f"{prefix}.norm_mha.weight"]
                 loaded += 1
             if f"{prefix}.norm_mha.bias" in weights:
                 block.norm_attn.bias = weights[f"{prefix}.norm_mha.bias"]
                 loaded += 1
+            
+            # norm_conv (for convolution module)
             if f"{prefix}.norm_conv.weight" in weights:
                 block.norm_conv.weight = weights[f"{prefix}.norm_conv.weight"]
                 loaded += 1
             if f"{prefix}.norm_conv.bias" in weights:
                 block.norm_conv.bias = weights[f"{prefix}.norm_conv.bias"]
                 loaded += 1
+            
+            # norm_ff (for second FF)
             if f"{prefix}.norm_ff.weight" in weights:
-                block.ff.layers[0].weight = weights[f"{prefix}.norm_ff.weight"]
+                block.norm_ff.weight = weights[f"{prefix}.norm_ff.weight"]
                 loaded += 1
             if f"{prefix}.norm_ff.bias" in weights:
-                block.ff.layers[0].bias = weights[f"{prefix}.norm_ff.bias"]
+                block.norm_ff.bias = weights[f"{prefix}.norm_ff.bias"]
                 loaded += 1
+            
+            # norm_final (after all sub-modules)
             if f"{prefix}.norm_final.weight" in weights:
                 block.norm_final.weight = weights[f"{prefix}.norm_final.weight"]
                 loaded += 1
