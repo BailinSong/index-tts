@@ -38,7 +38,7 @@ import torch.nn.functional as F
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
-            use_cuda_kernel=None,use_deepspeed=False, use_mlx=False
+            use_cuda_kernel=None,use_deepspeed=False, use_mlx=False, diffusion_steps=20
     ):
         """
         Args:
@@ -49,6 +49,7 @@ class IndexTTS2:
             use_cuda_kernel (None | bool): whether to use BigVGan custom fused activation CUDA kernel, only for CUDA device.
             use_deepspeed (bool): whether to use DeepSpeed or not.
             use_mlx (bool): whether to enable MLX optimizations for Apple Silicon M4.
+            diffusion_steps (int): number of diffusion steps for S2MEL (default: 20, range: 10-25).
         """
         # MLX optimization mode for Apple Silicon M4
         self.use_mlx = use_mlx
@@ -105,6 +106,7 @@ class IndexTTS2:
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
         self.dtype = torch.float16 if self.use_fp16 else None
+        self.diffusion_steps = diffusion_steps  # Number of diffusion steps for S2MEL (default: 20)
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
 
         self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
@@ -794,17 +796,25 @@ class IndexTTS2:
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
-                    diffusion_steps = 25  # Baseline: original 25 steps for quality comparison
+                    diffusion_steps = self.diffusion_steps  # Configurable via --diffusion-steps (default: 20)
                     inference_cfg_rate = 0.7
                     
                     # Profiling: gpt_layer
                     t0 = time.perf_counter()
                     latent = self.s2mel.models['gpt_layer'](latent)
+                    t_gpt_layer = time.perf_counter() - t0
+                    
+                    # Profiling: vq2emb
+                    t0 = time.perf_counter()
                     S_infer = self.semantic_codec.quantizer.vq2emb(codes.unsqueeze(1))
+                    t_vq2emb = time.perf_counter() - t0
+                    
+                    # Profiling: transpose + add
+                    t0 = time.perf_counter()
                     S_infer = S_infer.transpose(1, 2)
                     S_infer = S_infer + latent
                     target_lengths = (code_lens * 1.72).long()
-                    t_gpt_layer = time.perf_counter() - t0
+                    t_prepare = time.perf_counter() - t0
                     
                     # Profiling: length_regulator
                     t0 = time.perf_counter()
@@ -835,7 +845,7 @@ class IndexTTS2:
                     s2mel_time += time.perf_counter() - m_start_time
                     
                     # Print detailed profiling
-                    print(f">> S2MEL breakdown: gpt_layer={t_gpt_layer:.2f}s, length_reg={t_length_reg:.2f}s, cfm={t_cfm:.2f}s (steps={diffusion_steps})")
+                    print(f">> S2MEL breakdown: gpt_layer={t_gpt_layer:.2f}s, vq2emb={t_vq2emb:.2f}s, prepare={t_prepare:.4f}s, length_reg={t_length_reg:.2f}s, cfm={t_cfm:.2f}s (steps={diffusion_steps})")
 
                     m_start_time = time.perf_counter()
                     wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)

@@ -16,6 +16,7 @@ def main():
     parser.add_argument("-f", "--force", action="store_true", default=False, help="Force to overwrite the output file if it exists")
     parser.add_argument("-d", "--device", type=str, default=None, help="Device to run the model on (cpu, cuda, mps, xpu)." )
     parser.add_argument("--mlx", action="store_true", default=False, help="Enable MLX optimizations for Apple Silicon M4")
+    parser.add_argument("--diffusion-steps", type=int, default=20, help="Number of diffusion steps for S2MEL (default: 20, range: 10-25)")
     args = parser.parse_args()
     if len(args.text.strip()) == 0:
         print("ERROR: Text is empty.")
@@ -64,7 +65,8 @@ def main():
         model_dir=args.model_dir,
         use_fp16=args.fp16,
         device=args.device,
-        use_mlx=args.mlx
+        use_mlx=args.mlx,
+        diffusion_steps=args.diffusion_steps
     )
     tts.infer(spk_audio_prompt=args.voice, text=args.text.strip(), output_path=output_path)
 

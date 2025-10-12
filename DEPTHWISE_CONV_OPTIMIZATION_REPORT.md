@@ -287,3 +287,4 @@ test_eps_fixed.wav  (Pure MLX v2, correlation 0.9867, LayerNorm eps修复)
 
 **结论**: Pure MLX Conformer 的实现是正确的，但由于 MLX 和 PyTorch 的浮点精度差异，6 层累积后 correlation 为 0.9867，导致仍有丢字现象。建议切换到 Hybrid Mode 以获得最佳音质。
 
+
