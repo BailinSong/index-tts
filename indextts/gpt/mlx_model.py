@@ -507,20 +507,28 @@ class UnifiedVoiceMLX(nn.Module):
         loaded = 0
         conformer = self.conditioning_module.conformer
         
-        # Input projection
-        # Note: input_proj is nn.Sequential([Linear, LayerNorm])
-        # Access via .layers[0] for the Linear layer
+        # ✅ FIX: Load Conv2d Subsampling weights
+        # Conv2d: conditioning_encoder.embed.conv.0.weight (512, 1, 3, 3)
+        if 'conditioning_encoder.embed.conv.0.weight' in weights:
+            # PyTorch: (out_channels=512, in_channels=1, H=3, W=3)
+            # MLX: same shape
+            conformer.subsampling.conv.weight = weights['conditioning_encoder.embed.conv.0.weight']
+            loaded += 1
+        
+        if 'conditioning_encoder.embed.conv.0.bias' in weights:
+            # PyTorch: (512,)
+            conformer.subsampling.conv.bias = weights['conditioning_encoder.embed.conv.0.bias']
+            loaded += 1
+        
+        # Linear projection after Conv2d: conditioning_encoder.embed.out.0
         if 'conditioning_encoder.embed.out.0.weight' in weights:
-            # PyTorch: (512, 261632) - this is huge, probably includes conv
-            # MLX: (512, 1024) - just linear
-            # We'll take the first 1024 columns
-            pt_weight = weights['conditioning_encoder.embed.out.0.weight']
-            if pt_weight.shape[1] >= 1024:
-                conformer.input_proj.layers[0].weight = pt_weight[:, :1024]
-                loaded += 1
+            # PyTorch: (512, 261632) where 261632 = 512 * 511
+            # MLX: same
+            conformer.subsampling.out.weight = weights['conditioning_encoder.embed.out.0.weight']
+            loaded += 1
         
         if 'conditioning_encoder.embed.out.0.bias' in weights:
-            conformer.input_proj.layers[0].bias = weights['conditioning_encoder.embed.out.0.bias']
+            conformer.subsampling.out.bias = weights['conditioning_encoder.embed.out.0.bias']
             loaded += 1
         
         # Position encoding
@@ -637,12 +645,12 @@ class UnifiedVoiceMLX(nn.Module):
                 block.norm_final.bias = weights[f"{prefix}.norm_final.bias"]
                 loaded += 1
         
-        # Final norm
+        # Final norm (after all conformer blocks)
         if 'conditioning_encoder.after_norm.weight' in weights:
-            conformer.norm.weight = weights['conditioning_encoder.after_norm.weight']
+            conformer.after_norm.weight = weights['conditioning_encoder.after_norm.weight']
             loaded += 1
         if 'conditioning_encoder.after_norm.bias' in weights:
-            conformer.norm.bias = weights['conditioning_encoder.after_norm.bias']
+            conformer.after_norm.bias = weights['conditioning_encoder.after_norm.bias']
             loaded += 1
         
         return loaded

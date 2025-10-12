@@ -519,7 +519,7 @@ class MLXConformerEncoder(nn.Module):
     
     Args:
         input_dim: Input feature dimension (e.g., 1024 for speaker embeddings)
-        output_dim: Output dimension (1280 for IndexTTS2)
+        output_dim: Output dimension (512 for IndexTTS2)
         num_layers: Number of Conformer blocks (default 6)
         num_heads: Number of attention heads
         ff_mult: Feed-forward expansion multiplier
@@ -538,13 +538,15 @@ class MLXConformerEncoder(nn.Module):
         
         self.output_dim = output_dim
         
-        # Input projection (subsampling + projection in original, simplified here)
-        self.input_proj = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
-            nn.LayerNorm(output_dim)
-        )
+        # ✅ FIX: Use Conv2d Subsampling to match PyTorch (121 → 60)
+        from indextts.gpt.mlx_subsampling import MLXConv2dSubsampling2Fixed
+        self.subsampling = MLXConv2dSubsampling2Fixed(input_dim, output_dim)
         
-        # Positional encoding (simplified, learnable)
+        # ✅ FIX: xscale for positional encoding (sqrt(d_model))
+        import math
+        self.xscale = math.sqrt(output_dim)  # sqrt(512) = 22.627
+        
+        # Positional encoding (will be loaded from checkpoint)
         max_len = 1000
         self.pos_encoding = mx.random.normal((max_len, output_dim)) * 0.02
         
@@ -560,7 +562,8 @@ class MLXConformerEncoder(nn.Module):
                 )
             )
         
-        self.norm = nn.LayerNorm(output_dim)
+        # Final norm (matches PyTorch after_norm)
+        self.after_norm = nn.LayerNorm(output_dim)
     
     def __call__(self, x, lengths=None):
         """
@@ -569,28 +572,31 @@ class MLXConformerEncoder(nn.Module):
             lengths: Sequence lengths for masking (batch,)
         
         Returns:
-            Encoded features (batch, seq_len, output_dim)
-            Mask (batch, seq_len)
+            Encoded features (batch, seq_len', output_dim) where seq_len' = seq_len // 2
+            Mask (batch, seq_len')
         """
-        # Project input
-        x = self.input_proj(x)
+        # ✅ FIX: Apply Conv2d subsampling (seq_len → seq_len // 2)
+        x = self.subsampling(x)  # (batch, seq_len//2, output_dim)
         
-        # Add positional encoding
+        # ✅ FIX: Apply xscale and add positional encoding (matches PyTorch)
+        # PyTorch: x = x * xscale + pos_emb
         seq_len = x.shape[1]
         pos_emb = self.pos_encoding[:seq_len]
         pos_emb = mx.broadcast_to(
             pos_emb.reshape(1, seq_len, self.output_dim),
             (x.shape[0], seq_len, self.output_dim)
         )
+        x = x * self.xscale + pos_emb  # ✅ CRITICAL: xscale = sqrt(512) = 22.627
         
-        # Create mask if lengths provided
+        # Create mask if lengths provided (adjust for subsampling)
         mask = None
         mask_pad = None
         if lengths is not None:
-            # Create padding mask: True for valid positions
+            # Lengths are halved due to subsampling
+            lengths_subsampled = lengths // 2
             batch_size = x.shape[0]
             positions = mx.arange(seq_len).reshape(1, -1)
-            lengths_expanded = lengths.reshape(-1, 1)
+            lengths_expanded = lengths_subsampled.reshape(-1, 1)
             mask_pad = positions < lengths_expanded  # (batch, seq)
             mask_pad = mask_pad.reshape(batch_size, 1, 1, seq_len)  # For attention
         
@@ -598,8 +604,8 @@ class MLXConformerEncoder(nn.Module):
         for block in self.blocks:
             x = block(x, pos_emb, mask, mask_pad)
         
-        # Final normalization
-        x = self.norm(x)
+        # Final normalization (matches PyTorch after_norm)
+        x = self.after_norm(x)
         
         return x, mask
 
