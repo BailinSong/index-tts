@@ -761,12 +761,11 @@ class IndexTTS2:
                 code_lens = []
                 for code in codes:
                     if self.stop_mel_token not in code:
-                        code_lens.append(len(code))
                         code_len = len(code)
                     else:
                         len_ = (code == self.stop_mel_token).nonzero(as_tuple=False)[0] + 1
                         code_len = len_ - 1
-                    code_lens.append(code_len)
+                    code_lens.append(code_len)  # ✅ FIX: Only append once
                 codes = codes[:, :code_len]
                 code_lens = torch.LongTensor(code_lens)
                 code_lens = code_lens.to(self.device)
