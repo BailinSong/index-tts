@@ -1039,6 +1039,7 @@ class UnifiedVoiceMLX(nn.Module):
         """
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         import torch
+        import mlx.core as mx
         
         print(">> [MLX Native] Running pure MLX inference with Conformer + Perceiver")
         
@@ -1114,7 +1115,6 @@ class UnifiedVoiceMLX(nn.Module):
         
         # 🔧 修复内存泄漏：清理 MLX 中间结果
         try:
-            import mlx.core as mx
             # 删除大的中间 MLX 数组
             del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
             del speech_conditioning_latent_mlx, emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
