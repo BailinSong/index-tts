@@ -685,10 +685,17 @@ class UnifiedVoiceMLX(nn.Module):
         # 🔧 修复：重置随机状态以避免推理间状态累积
         # 每次推理使用新的随机种子（基于时间），确保推理独立性
         import time
+        import os
+        
         seed = kwargs.get('seed', None)
         if seed is None:
-            # 使用时间戳生成新的随机种子，确保每次推理独立
-            seed = int(time.time() * 1000000) % (2**32)
+            # 检查是否有固定种子的环境变量（用于调试）
+            fixed_seed_str = os.environ.get('MLX_FIXED_SEED', None)
+            if fixed_seed_str:
+                seed = int(fixed_seed_str)
+            else:
+                # 使用时间戳生成新的随机种子，确保每次推理独立
+                seed = int(time.time() * 1000000) % (2**32)
         
         # Debug: 打印种子（可选）
         debug_generation = kwargs.get('debug_generation', False)
