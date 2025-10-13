@@ -718,21 +718,44 @@ class UnifiedVoiceMLX(nn.Module):
             cond_len = 32
             conditioning = mx.zeros((batch_size, cond_len, self.model_dim))
         
-        # Get text embeddings
-        text_emb = self.text_embedding(text_tokens)  # (B, T, D)
+        # 🔧 CRITICAL FIX: Match PyTorch's prepare_gpt_inputs logic
+        # PyTorch filters out stop/start tokens and adds them back at boundaries
+        # This is essential for correct text-to-mel alignment
+        batch_size = text_tokens.shape[0]
         
-        # Add text positional embeddings (like PyTorch LearnedPositionEmbeddings)
-        # PyTorch returns (seq_len, dim), we need to expand for batch
-        text_seq_len = text_tokens.shape[1]
-        max_text_pos = self.text_pos_embedding.weight.shape[0]
+        # Process each batch (usually batch_size=1 for inference)
+        processed_text_embs = []
+        for i in range(batch_size):
+            text_input = text_tokens[i]  # (T,)
+            
+            # 1. Filter out stop_text_token (1) and start_text_token (0)
+            # Use list comprehension (more reliable than MLX boolean indexing)
+            text_input_list = text_input.tolist()
+            text_input_filtered_list = [t for t in text_input_list if t != 0 and t != 1]
+            
+            # 2. Add start_text_token at beginning and stop_text_token at end
+            # PyTorch: F.pad(text_input, (1, 0), value=0) then F.pad(..., (0, 1), value=1)
+            text_input_processed_list = [0] + text_input_filtered_list + [1]
+            text_input_processed = mx.array(text_input_processed_list, dtype=mx.int32)
+            
+            # 3. Get text embeddings + positional embeddings
+            text_seq_len = text_input_processed.shape[0]
+            max_text_pos = self.text_pos_embedding.weight.shape[0]
+            
+            # 检查是否越界
+            if text_seq_len > max_text_pos:
+                print(f"⚠️  WARNING: text_seq_len ({text_seq_len}) > max_text_pos ({max_text_pos})")
+                text_seq_len = max_text_pos
+                text_input_processed = text_input_processed[:text_seq_len]
+            
+            text_emb = self.text_embedding(text_input_processed.reshape(1, -1))  # (1, T, D)
+            text_pos_emb = mx.stack([self.text_pos_embedding.weight[j] for j in range(text_seq_len)], axis=0)  # (T, D)
+            text_emb = text_emb[0] + text_pos_emb  # (T, D)
+            
+            processed_text_embs.append(text_emb)
         
-        # 检查是否越界
-        if text_seq_len > max_text_pos:
-            print(f"⚠️  WARNING: text_seq_len ({text_seq_len}) > max_text_pos ({max_text_pos})")
-            text_seq_len = max_text_pos
-        
-        text_pos_emb = mx.stack([self.text_pos_embedding.weight[i] for i in range(text_seq_len)], axis=0)  # (T, D)
-        text_emb = text_emb[:, :text_seq_len] + text_pos_emb  # Broadcasting: (B, T, D) + (T, D) -> (B, T, D)
+        # Stack back to batch
+        text_emb = mx.stack(processed_text_embs, axis=0)  # (B, T, D)
         
         # Combine conditioning + text
         context = mx.concatenate([conditioning, text_emb], axis=1)  # (B, C+T, D)
@@ -760,12 +783,10 @@ class UnifiedVoiceMLX(nn.Module):
         
         if debug_generation:
             print(f"\n[DEBUG] Generation Setup:")
-            print(f"  Text tokens shape: {text_tokens.shape}")
-            print(f"  Text tokens (first 10): {text_tokens[0, :min(10, text_tokens.shape[1])].tolist()}")
+            print(f"  Text tokens shape: {text_tokens.shape} -> Processed: {text_emb.shape}")
             print(f"  Conditioning shape: {conditioning.shape}")
             print(f"  Context length: {context.shape[1]}")
-            print(f"  Start token ID: {self.start_mel_token}")
-            print(f"  Start token position: {start_pos}")
+            print(f"  Start mel token ID: {self.start_mel_token} at position {start_pos}")
         
         print(f">> [MLX] Starting autoregressive loop with KV cache (max_length={max_length})...")
         print(f"   Initial sequence: {sequence.shape[1]} tokens (context={context.shape[1]} + start_token=1)")
