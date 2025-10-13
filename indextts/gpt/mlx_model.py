@@ -709,8 +709,15 @@ class UnifiedVoiceMLX(nn.Module):
         # Add text positional embeddings (like PyTorch LearnedPositionEmbeddings)
         # PyTorch returns (seq_len, dim), we need to expand for batch
         text_seq_len = text_tokens.shape[1]
+        max_text_pos = self.text_pos_embedding.weight.shape[0]
+        
+        # 检查是否越界
+        if text_seq_len > max_text_pos:
+            print(f"⚠️  WARNING: text_seq_len ({text_seq_len}) > max_text_pos ({max_text_pos})")
+            text_seq_len = max_text_pos
+        
         text_pos_emb = mx.stack([self.text_pos_embedding.weight[i] for i in range(text_seq_len)], axis=0)  # (T, D)
-        text_emb = text_emb + text_pos_emb  # Broadcasting: (B, T, D) + (T, D) -> (B, T, D)
+        text_emb = text_emb[:, :text_seq_len] + text_pos_emb  # Broadcasting: (B, T, D) + (T, D) -> (B, T, D)
         
         # Combine conditioning + text
         context = mx.concatenate([conditioning, text_emb], axis=1)  # (B, C+T, D)
