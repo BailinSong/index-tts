@@ -682,6 +682,15 @@ class UnifiedVoiceMLX(nn.Module):
         Returns:
             Generated mel codes (batch, mel_len) - MLX array
         """
+        # 🔧 修复：重置随机状态以避免推理间状态累积
+        # 每次推理使用新的随机种子（基于时间），确保推理独立性
+        import time
+        seed = kwargs.get('seed', None)
+        if seed is None:
+            # 使用时间戳生成新的随机种子，确保每次推理独立
+            seed = int(time.time() * 1000000) % (2**32)
+        mx.random.seed(seed)
+        
         # Create default conditioning if not provided
         if conditioning is None:
             batch_size = text_tokens.shape[0]
@@ -811,6 +820,13 @@ class UnifiedVoiceMLX(nn.Module):
             codes = mx.concatenate(generated, axis=1)
         else:
             codes = mx.zeros((text_tokens.shape[0], 0), dtype=mx.int32)
+        
+        # 🔧 修复：显式清理 KV cache 和中间变量
+        try:
+            del past_kvs, new_past_kvs, hidden, logits, probs
+            del context, sequence, text_emb, conditioning
+        except:
+            pass
         
         return codes
     
@@ -1113,14 +1129,18 @@ class UnifiedVoiceMLX(nn.Module):
         
         print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens with pure MLX conditioning")
         
-        # 🔧 修复内存泄漏：清理 MLX 中间结果
+        # 🔧 修复内存泄漏和状态累积：清理 MLX 中间结果
         try:
             # 删除大的中间 MLX 数组
             del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
             del speech_conditioning_latent_mlx, emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
-            # 清理 MLX 缓存
+            # 清理 MLX 缓存和Metal资源
             mx.metal.clear_cache()
-        except:
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+        except Exception as e:
+            # 静默失败，不影响返回结果
             pass
         
         return codes, speech_conditioning_latent_torch
