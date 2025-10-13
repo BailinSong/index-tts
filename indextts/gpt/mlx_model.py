@@ -1112,6 +1112,17 @@ class UnifiedVoiceMLX(nn.Module):
         
         print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens with pure MLX conditioning")
         
+        # 🔧 修复内存泄漏：清理 MLX 中间结果
+        try:
+            import mlx.core as mx
+            # 删除大的中间 MLX 数组
+            del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
+            del speech_conditioning_latent_mlx, emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
+            # 清理 MLX 缓存
+            mx.metal.clear_cache()
+        except:
+            pass
+        
         return codes, speech_conditioning_latent_torch
 
 

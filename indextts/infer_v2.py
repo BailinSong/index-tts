@@ -470,25 +470,42 @@ class IndexTTS2:
               emo_vector=None,
               use_emo_text=False, emo_text=None, use_random=False, interval_silence=200,
               verbose=False, max_text_tokens_per_segment=120, stream_return=False, more_segment_before=0, **generation_kwargs):
-        if stream_return:
-            return self.infer_generator(
-                spk_audio_prompt, text, output_path,
-                emo_audio_prompt, emo_alpha,
-                emo_vector,
-                use_emo_text, emo_text, use_random, interval_silence,
-                verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-            )
-        else:
-            try:
-                return list(self.infer_generator(
+        try:
+            if stream_return:
+                return self.infer_generator(
                     spk_audio_prompt, text, output_path,
                     emo_audio_prompt, emo_alpha,
                     emo_vector,
                     use_emo_text, emo_text, use_random, interval_silence,
                     verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-                ))[0]
-            except IndexError:
-                return None
+                )
+            else:
+                try:
+                    return list(self.infer_generator(
+                        spk_audio_prompt, text, output_path,
+                        emo_audio_prompt, emo_alpha,
+                        emo_vector,
+                        use_emo_text, emo_text, use_random, interval_silence,
+                        verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
+                    ))[0]
+                except IndexError:
+                    return None
+        finally:
+            # 🔧 修复内存泄漏：每次推理后清理缓存
+            import gc
+            gc.collect()
+            
+            # 清理 PyTorch MPS 缓存
+            if self.device == 'mps' and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            
+            # 清理 MLX 缓存
+            if self.use_mlx:
+                import mlx.core as mx
+                try:
+                    mx.metal.clear_cache()
+                except:
+                    pass
     
     def infer_generator(self, spk_audio_prompt, text, output_path,
               emo_audio_prompt=None, emo_alpha=1.0,
