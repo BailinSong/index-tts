@@ -689,6 +689,12 @@ class UnifiedVoiceMLX(nn.Module):
         if seed is None:
             # 使用时间戳生成新的随机种子，确保每次推理独立
             seed = int(time.time() * 1000000) % (2**32)
+        
+        # Debug: 打印种子（可选）
+        debug_generation = kwargs.get('debug_generation', False)
+        if debug_generation:
+            print(f"[DEBUG] Random seed: {seed}")
+        
         mx.random.seed(seed)
         
         # Create default conditioning if not provided
@@ -744,13 +750,18 @@ class UnifiedVoiceMLX(nn.Module):
         logits = self.mel_head(hidden[:, -1:, :])
         
         temperature = kwargs.get('temperature', 0.8)
-        if temperature > 0:
-            logits = logits / temperature
+        use_sampling = kwargs.get('use_sampling', True)  # 可配置
         
-        # Sample from the distribution (like PyTorch)
-        probs = mx.softmax(logits[0, 0], axis=-1)
-        next_token_id = mx.random.categorical(mx.log(probs + 1e-10))
-        next_token = mx.array([[next_token_id]])
+        if use_sampling and temperature > 0:
+            # 随机采样模式
+            logits = logits / temperature
+            probs = mx.softmax(logits[0, 0], axis=-1)
+            next_token_id = mx.random.categorical(mx.log(probs + 1e-10))
+            next_token = mx.array([[next_token_id]])
+        else:
+            # 确定性模式（argmax）- 可能更稳定
+            next_token_id = mx.argmax(logits[0, 0])
+            next_token = mx.array([[next_token_id]])
         
         token_val = int(next_token[0, 0])
         print(f">> [MLX] First token: {token_val}")
@@ -795,13 +806,17 @@ class UnifiedVoiceMLX(nn.Module):
             
             # Get next token logits
             logits = self.mel_head(hidden)  # (B, 1, vocab)
-            if temperature > 0:
-                logits = logits / temperature
             
-            # Sample from the distribution instead of argmax (like PyTorch)
-            probs = mx.softmax(logits[0, 0], axis=-1)  # (vocab,)
-            next_token_id = mx.random.categorical(mx.log(probs + 1e-10))  # Sample
-            next_token = mx.array([[next_token_id]])  # (1, 1)
+            if use_sampling and temperature > 0:
+                # 随机采样模式
+                logits = logits / temperature
+                probs = mx.softmax(logits[0, 0], axis=-1)  # (vocab,)
+                next_token_id = mx.random.categorical(mx.log(probs + 1e-10))  # Sample
+                next_token = mx.array([[next_token_id]])  # (1, 1)
+            else:
+                # 确定性模式（argmax）
+                next_token_id = mx.argmax(logits[0, 0])
+                next_token = mx.array([[next_token_id]])
             
             # Check stop token
             token_val = int(next_token[0, 0])

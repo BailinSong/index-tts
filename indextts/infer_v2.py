@@ -712,6 +712,7 @@ class IndexTTS2:
                                 emo_vec=emovec,
                                 temperature=temperature,
                                 max_generate_length=max_mel_tokens,
+                                use_sampling=generation_kwargs.get('use_sampling', True),  # 传递采样模式
                             )
                         else:
                             # Hybrid mode: PyTorch conditioning + MLX transformer
