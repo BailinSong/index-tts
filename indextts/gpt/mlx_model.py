@@ -741,6 +741,17 @@ class UnifiedVoiceMLX(nn.Module):
         # Autoregressive generation with KV caching for efficiency
         generated = []
         
+        debug_generation = kwargs.get('debug_generation', False)
+        
+        if debug_generation:
+            print(f"\n[DEBUG] Generation Setup:")
+            print(f"  Text tokens shape: {text_tokens.shape}")
+            print(f"  Text tokens (first 10): {text_tokens[0, :min(10, text_tokens.shape[1])].tolist()}")
+            print(f"  Conditioning shape: {conditioning.shape}")
+            print(f"  Context length: {context.shape[1]}")
+            print(f"  Start token ID: {self.start_mel_token}")
+            print(f"  Start token position: {start_pos}")
+        
         print(f">> [MLX] Starting autoregressive loop with KV cache (max_length={max_length})...")
         print(f"   Initial sequence: {sequence.shape[1]} tokens (context={context.shape[1]} + start_token=1)")
         print(f"   Start token position: {start_pos}")
@@ -772,6 +783,17 @@ class UnifiedVoiceMLX(nn.Module):
         
         token_val = int(next_token[0, 0])
         print(f">> [MLX] First token: {token_val}")
+        
+        if debug_generation:
+            print(f"[DEBUG] First token logits top 10:")
+            top_k = 10
+            logits_1d = logits[0, 0]
+            top_indices = mx.argsort(logits_1d)[-top_k:][::-1]
+            top_values = logits_1d[top_indices]
+            for i in range(top_k):
+                idx = int(top_indices[i])
+                val = float(top_values[i])
+                print(f"  #{i+1}: token {idx}, logit {val:.4f}")
         
         if token_val == self.stop_mel_token:
             print(f">> [MLX] Hit stop token at step 0")
@@ -842,6 +864,12 @@ class UnifiedVoiceMLX(nn.Module):
             codes = mx.concatenate(generated, axis=1)
         else:
             codes = mx.zeros((text_tokens.shape[0], 0), dtype=mx.int32)
+        
+        # Debug: print first 10 tokens
+        if debug_generation and codes.shape[1] > 0:
+            first_n = min(15, codes.shape[1])
+            tokens_list = [int(codes[0, i]) for i in range(first_n)]
+            print(f"[DEBUG] First {first_n} generated tokens: {tokens_list}")
         
         # 🔧 修复：显式清理 KV cache 和中间变量
         try:

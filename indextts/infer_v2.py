@@ -713,6 +713,7 @@ class IndexTTS2:
                                 temperature=temperature,
                                 max_generate_length=max_mel_tokens,
                                 use_sampling=generation_kwargs.get('use_sampling', True),  # 传递采样模式
+                                debug_generation=generation_kwargs.get('debug_generation', False),  # 传递 debug 模式
                             )
                         else:
                             # Hybrid mode: PyTorch conditioning + MLX transformer

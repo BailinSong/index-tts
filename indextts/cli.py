@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--mlx", action="store_true", default=False, help="Enable MLX optimizations for Apple Silicon M4")
     parser.add_argument("--diffusion-steps", type=int, default=20, help="Number of diffusion steps for S2MEL (default: 20, range: 10-25)")
     parser.add_argument("--deterministic", action="store_true", default=False, help="Use deterministic generation (argmax) instead of sampling for MLX")
+    parser.add_argument("--debug", action="store_true", default=False, help="Enable debug output for MLX generation")
     args = parser.parse_args()
     if len(args.text.strip()) == 0:
         print("ERROR: Text is empty.")
@@ -73,6 +74,8 @@ def main():
     generation_kwargs = {}
     if args.deterministic:
         generation_kwargs['use_sampling'] = False
+    if args.debug:
+        generation_kwargs['debug_generation'] = True
     
     tts.infer(
         spk_audio_prompt=args.voice,
