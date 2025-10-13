@@ -694,8 +694,16 @@ class UnifiedVoiceMLX(nn.Module):
             if fixed_seed_str:
                 seed = int(fixed_seed_str)
             else:
-                # 使用时间戳生成新的随机种子，确保每次推理独立
-                seed = int(time.time() * 1000000) % (2**32)
+                # 🔧 修复首单词吞音：使用固定种子确保稳定性
+                # 而不是时间戳（会导致每次输出不同）
+                # 如果需要随机性，可以通过 seed 参数或 MLX_RANDOM_SEED=1 环境变量启用
+                use_random_seed = os.environ.get('MLX_RANDOM_SEED', '0') == '1'
+                if use_random_seed:
+                    # 随机模式：使用时间戳
+                    seed = int(time.time() * 1000000) % (2**32)
+                else:
+                    # 默认：固定种子，确保稳定输出
+                    seed = 42
         
         # Debug: 打印种子（可选）
         debug_generation = kwargs.get('debug_generation', False)
