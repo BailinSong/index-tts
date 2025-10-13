@@ -1169,7 +1169,9 @@ class UnifiedVoiceMLX(nn.Module):
             text_mlx,
             conds_mlx,
             max_length=kwargs.get('max_generate_length', 500),  # Reduce default for testing
-            temperature=kwargs.get('temperature', 0.8)
+            temperature=kwargs.get('temperature', 0.8),
+            use_sampling=kwargs.get('use_sampling', True),  # 传递采样模式
+            debug_generation=kwargs.get('debug_generation', False),  # 传递 debug 模式
         )
         print(f">> [MLX] Generation complete")
         
