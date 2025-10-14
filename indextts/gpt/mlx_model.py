@@ -8,6 +8,7 @@ import mlx.core as mx
 import mlx.nn as nn
 from typing import Optional, Tuple
 import math
+import numpy as np
 
 
 class MLXLinear(nn.Module):
@@ -100,9 +101,11 @@ class MLXMultiHeadAttention(nn.Module):
                 # No cache or full sequence: extract mask for all query positions
                 mask_slice = causal_mask[:, :, :seq_len, :kv_seq_len]
             
-            # Convert bool mask to attention mask: True -> 0.0, False -> -10000.0
-            attn_mask = mx.where(mask_slice, 0.0, -10000.0)
-            scores = scores + attn_mask
+            # CRITICAL FIX: Use mx.where() to apply mask (matching PyTorch)
+            # True = keep score, False = replace with -inf
+            # This matches transformers_gpt2.py line 269: attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+            mask_value = float(np.finfo(np.float32).min)  # -3.4e38
+            scores = mx.where(mask_slice, scores, mask_value)
         
         # Softmax and apply to values
         attn_weights = mx.softmax(scores, axis=-1)
@@ -290,6 +293,7 @@ class UnifiedVoiceMLX(nn.Module):
         
         # Load embeddings and heads
         # Note: Position embeddings use .emb.weight in PyTorch checkpoint
+        # CRITICAL FIX: PyTorch inference_model uses gpt.ln_f, not final_norm!
         simple_mappings = {
             'text_embedding.weight': ('text_embedding', 'weight'),
             'mel_embedding.weight': ('mel_embedding', 'weight'),
@@ -299,8 +303,8 @@ class UnifiedVoiceMLX(nn.Module):
             'mel_head.bias': ('mel_head', 'bias'),
             'text_head.weight': ('text_head', 'weight'),
             'text_head.bias': ('text_head', 'bias'),
-            'final_norm.weight': ('final_norm', 'weight'),
-            'final_norm.bias': ('final_norm', 'bias'),
+            'gpt.ln_f.weight': ('final_norm', 'weight'),  # FIXED: Use gpt.ln_f instead of final_norm
+            'gpt.ln_f.bias': ('final_norm', 'bias'),      # FIXED: Use gpt.ln_f instead of final_norm
             'speed_emb.weight': ('speed_emb', 'weight'),
             'emo_layer.weight': ('emo_layer', 'weight'),
             'emo_layer.bias': ('emo_layer', 'bias'),
@@ -669,15 +673,427 @@ class UnifiedVoiceMLX(nn.Module):
         
         return loaded
     
-    def simple_forward(self, text_tokens, conditioning=None, max_length=1500, **kwargs):
+    def beam_search_forward(self, text_tokens, conditioning=None, max_length=1500, num_beams=3, length_penalty=1.0, **kwargs):
         """
-        Full forward pass with transformer layers for generation.
+        True beam search implementation (matches PyTorch transformers).
+        
+        At each step:
+        1. Expand each beam with top-k next tokens
+        2. Score all candidates (num_beams * vocab_size)
+        3. Keep top num_beams candidates for next step
+        4. Apply repetition penalty and length penalty
         
         Args:
             text_tokens: Text token IDs (batch, text_len) - MLX array
             conditioning: Conditioning latent (batch, cond_len, model_dim) - MLX array
             max_length: Maximum mel tokens to generate
-            **kwargs: Extra arguments (ignored for compatibility)
+            num_beams: Number of beams to maintain
+            length_penalty: Length penalty (>1.0 encourages longer sequences)
+            
+        Returns:
+            Best sequence from beam search (batch, mel_len) - MLX array
+        """
+        import time
+        import os
+        
+        print(f">> [True Beam Search] num_beams={num_beams}, length_penalty={length_penalty}, save_all_beams={kwargs.get('save_all_beams', False)}")
+        
+        # Set random seed for reproducibility
+        base_seed = kwargs.get('seed', None)
+        if base_seed is None:
+            fixed_seed_str = os.environ.get('MLX_FIXED_SEED', None)
+            if fixed_seed_str:
+                base_seed = int(fixed_seed_str)
+            else:
+                base_seed = int(time.time() * 1000000) % (2**32)
+        mx.random.seed(base_seed)
+        import numpy as np
+        np.random.seed(base_seed)  # Also set numpy seed for multinomial sampling
+        print(f">> [Beam Search] Using seed: {base_seed}")
+        print(f">> [Beam Search] Starting initialization...")
+        
+        # Create default conditioning if needed
+        if conditioning is None:
+            batch_size = text_tokens.shape[0]
+            cond_len = 32
+            conditioning = mx.zeros((batch_size, cond_len, self.model_dim))
+        
+        batch_size = text_tokens.shape[0]
+        assert batch_size == 1, "Beam search currently only supports batch_size=1"
+        
+        # Process text tokens (add boundary tokens)
+        text_input = text_tokens[0]
+        text_input_list = text_input.tolist()
+        text_input_filtered_list = [t for t in text_input_list if t != 0 and t != 1]
+        text_input_processed_list = [0] + text_input_filtered_list + [1]
+        text_input_processed = mx.array(text_input_processed_list, dtype=mx.int32)
+        
+        
+        text_seq_len = text_input_processed.shape[0]
+        max_text_pos = self.text_pos_embedding.weight.shape[0]
+        if text_seq_len > max_text_pos:
+            text_seq_len = max_text_pos
+            text_input_processed = text_input_processed[:text_seq_len]
+        
+        # Get text embeddings
+        text_emb = self.text_embedding(text_input_processed.reshape(1, -1))
+        text_pos_emb = mx.stack([self.text_pos_embedding.weight[j] for j in range(text_seq_len)], axis=0)
+        text_emb = text_emb[0] + text_pos_emb
+        text_emb = text_emb.reshape(1, -1, self.model_dim)
+        
+        # Create initial context
+        context = mx.concatenate([conditioning, text_emb], axis=1)
+        context_len = context.shape[1]
+        
+        # Add start token
+        start_token_ids = mx.full((1, 1), self.start_mel_token, dtype=mx.int32)
+        start_token_emb = self.mel_embedding(start_token_ids)
+        start_token_emb = start_token_emb + self.mel_pos_embedding.weight[context_len:context_len+1]
+        
+        # 🔧 CRITICAL FIX: PyTorch-style beam initialization
+        # All beams start with the SAME start_token, but with different scores:
+        # beam_scores = [0.0, -1e9, -1e9, ...] 
+        # This ensures only the first beam expands in step 1, creating diversity
+        
+        # First forward pass to get initial KV cache (shared by all beams initially)
+        initial_sequence = mx.concatenate([context, start_token_emb], axis=1)  # (1, context+1, D)
+        hidden = initial_sequence
+        initial_past_kvs = []
+        for block in self.transformer_blocks:
+            hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=None, use_cache=True)
+            initial_past_kvs.append(kv)
+        hidden = self.final_norm(hidden)
+        
+        # Initialize ALL beams with the SAME start token
+        beam_codes = []
+        beam_scores = []
+        beam_past_kvs = []
+        beam_finished = []
+        # 🔧 Track full input_ids like PyTorch (for repetition_penalty)
+        # PyTorch: input_ids = [fake_inputs..., start_mel_token, generated_tokens...]
+        # We simulate this with a list of token IDs
+        beam_input_ids = []
+        # Fake inputs are all 1s in PyTorch (placeholder tokens)
+        fake_input_token = 1
+        initial_input_ids = [fake_input_token] * (context_len + text_seq_len) + [self.start_mel_token]
+        
+        for i in range(num_beams):
+            # All beams start with the same start_mel_token
+            beam_codes.append(mx.array([[self.start_mel_token]], dtype=mx.int32))
+            
+            # PyTorch trick: only first beam has score 0, others have -1e9
+            # This ensures first expansion only considers first beam's candidates
+            if i == 0:
+                beam_scores.append(0.0)
+            else:
+                beam_scores.append(-1e9)
+            
+            # All beams share the same initial KV cache (will diverge after first step)
+            beam_past_kvs.append([kv for kv in initial_past_kvs])
+            beam_finished.append(False)
+            # Initialize input_ids with fake_inputs + start_mel_token
+            beam_input_ids.append(initial_input_ids.copy())
+        
+        print(f">> [Beam Search] Initialized {num_beams} beams (PyTorch-style: scores=[0, -1e9, ...])")
+        
+        # Main beam search loop
+        repetition_penalty = kwargs.get('repetition_penalty', 10.0)
+        
+        for step in range(max_length - 1):
+            if all(beam_finished):
+                break
+            
+            # Debug: print beam_scores at step 1
+            if step == 1:
+                print(f"\n>> [Step 1 START] Beam scores:")
+                for i in range(len(beam_scores)):
+                    print(f"   Beam {i}: beam_score={beam_scores[i]:.4f}, tokens={beam_codes[i][0].tolist()}")
+            
+            if step % 50 == 0 and step > 0:
+                finished_count = sum(beam_finished)
+                print(f">> [Beam Search] Step {step}/{max_length}, {finished_count}/{num_beams} beams finished")
+            
+            # 🔧 CRITICAL FIX: PyTorch-style global beam expansion
+            # Compute logits for ALL beams in parallel
+            all_log_probs = []
+            all_new_kvs = []
+            
+            for beam_idx in range(num_beams):
+                if beam_finished[beam_idx]:
+                    # Finished beam: use placeholder logits (will be masked out)
+                    vocab_size = self.mel_head.weight.shape[0]
+                    all_log_probs.append(mx.full((vocab_size,), -1e9))
+                    all_new_kvs.append(None)
+                    continue
+                
+                # Get last token and create embedding
+                last_token_id = int(beam_codes[beam_idx][0, -1])
+                token_emb = self.mel_embedding(mx.array([[last_token_id]], dtype=mx.int32))
+                current_pos = context_len + beam_codes[beam_idx].shape[1]
+                token_emb = token_emb + self.mel_pos_embedding.weight[current_pos:current_pos+1]
+                
+                # Forward with KV cache
+                hidden = token_emb
+                new_kvs = []
+                for layer_idx, block in enumerate(self.transformer_blocks):
+                    hidden, kv = block(hidden, causal_mask=self.causal_mask, 
+                                     past_kv=beam_past_kvs[beam_idx][layer_idx], use_cache=True)
+                    new_kvs.append(kv)
+                
+                hidden = self.final_norm(hidden)
+                logits = self.mel_head(hidden)  # (1, 1, vocab)
+                logits_1d = logits[0, 0]
+                
+                # 🔧 PyTorch: log_softmax (without any modification)
+                max_logit = mx.max(logits_1d)
+                exp_logits = mx.exp(logits_1d - max_logit)
+                log_sum_exp = mx.log(mx.sum(exp_logits)) + max_logit
+                log_probs = logits_1d - log_sum_exp  # (vocab,)
+                
+                # Store log_probs WITHOUT beam_scores (will add after logits_processor)
+                all_log_probs.append(log_probs)
+                all_new_kvs.append(new_kvs)
+            
+            # 🔧 CRITICAL: Strict PyTorch beam search replication
+            # PyTorch: log_softmax -> logits_processor -> add beam_scores
+            import numpy as np
+            vocab_size = all_log_probs[0].shape[0]
+            
+            # Get parameters
+            temperature = kwargs.get('temperature', 0.8)
+            top_k = kwargs.get('top_k', 30)
+            top_p = kwargs.get('top_p', 0.8)
+            
+            # Step 1: all_log_probs are already log_softmax results (WITHOUT beam_scores)
+            # Step 2: Apply logits_processor (repetition_penalty)
+            # Step 3: Add beam_scores
+            processed_scores = []
+            for beam_idx in range(num_beams):
+                if beam_finished[beam_idx]:
+                    # Finished beam: use -inf probs
+                    processed_scores.append(mx.full((vocab_size,), -1e9))
+                    continue
+                
+                # Start with log_probs (already log_softmax, WITHOUT beam_scores)
+                log_probs_np = np.array(all_log_probs[beam_idx])
+                
+                # 🔧 Apply repetition_penalty (PyTorch's RepetitionPenaltyLogitsProcessor)
+                # PyTorch applies to ALL unique tokens in input_ids (including fake_inputs)
+                if repetition_penalty != 1.0:
+                    # Use complete input_ids (fake_inputs + start_mel + generated_mels)
+                    prev_tokens = set(beam_input_ids[beam_idx])
+                    for token_id in prev_tokens:
+                        if token_id < len(log_probs_np):
+                            if log_probs_np[token_id] < 0:
+                                log_probs_np[token_id] *= repetition_penalty
+                            else:
+                                log_probs_np[token_id] /= repetition_penalty
+                
+                # Add beam_score (PyTorch: next_token_scores_processed + beam_scores)
+                processed = mx.array(log_probs_np) + beam_scores[beam_idx]
+                processed_scores.append(processed)
+            
+            # Step 4: Reshape to (batch=1, num_beams * vocab_size) - PyTorch line 3537
+            all_scores_flat = mx.concatenate([scores.reshape(-1) for scores in processed_scores])
+            
+            # Step 3: PyTorch sampling (lines 3546-3550)
+            # Debug: analyze scores distribution at step 1
+            if step == 1:
+                scores_flat_np = np.array(all_scores_flat)
+                print(f"\n>> [Step 1] All scores stats (before softmax):")
+                print(f"   Total candidates: {len(scores_flat_np)}")
+                print(f"   Min: {scores_flat_np.min():.4f}, Max: {scores_flat_np.max():.4f}")
+                for beam_idx in range(num_beams):
+                    start = beam_idx * vocab_size
+                    end = start + vocab_size
+                    beam_scores_slice = scores_flat_np[start:end]
+                    print(f"   Beam {beam_idx} range: [{beam_scores_slice.min():.4f}, {beam_scores_slice.max():.4f}], " + 
+                          f"top token score: {beam_scores_slice.max():.4f}")
+            
+            # Softmax over all candidates
+            all_probs_flat = mx.softmax(all_scores_flat)
+            
+            # PyTorch sampling (lines 3546-3550): multinomial with sorting
+            n_tokens_to_keep = 2 * num_beams  # PyTorch: max(2, 1 + n_eos_tokens) * num_beams
+            
+            probs_np = np.array(all_probs_flat)
+            scores_np = np.array(all_scores_flat)
+            
+            # 🔧 FIX: Use Top-K instead of multinomial for stability
+            # Multinomial has RNG differences between PyTorch and NumPy
+            # Top-K guarantees the best candidates are selected
+            use_topk = True  # Set to False to use multinomial (for debugging)
+            
+            if use_topk:
+                # Deterministic top-k selection
+                sorted_order = np.argsort(scores_np)[::-1]  # Descending
+                sampled_indices_sorted = sorted_order[:n_tokens_to_keep]
+                sampled_scores_sorted = scores_np[sampled_indices_sorted]
+                
+                if step in [0, 1]:
+                    print(f"   [Top-K Selection] Selected top-{n_tokens_to_keep} candidates (deterministic)")
+            else:
+                # Original multinomial sampling (has RNG differences)
+                sampled_indices = np.random.choice(
+                    len(probs_np),
+                    size=min(n_tokens_to_keep, len(probs_np)),
+                    replace=False,
+                    p=probs_np / probs_np.sum()
+                )
+                
+                # Gather sampled scores and sort descending (PyTorch: gather + sort)
+                sampled_scores = scores_np[sampled_indices]
+                sorted_order = np.argsort(sampled_scores)[::-1]
+                sampled_indices_sorted = sampled_indices[sorted_order]
+                sampled_scores_sorted = sampled_scores[sorted_order]
+            
+            # Keep more candidates to handle finished beams (PyTorch logic)
+            # We need to select num_beams active beams from potentially n_tokens_to_keep candidates
+            candidate_indices_flat = mx.array(sampled_indices_sorted, dtype=mx.int32)
+            candidate_scores_flat = mx.array(sampled_scores_sorted)
+            
+            
+            
+            # Build new beams - PyTorch beam_scorer.process logic
+            # Separate finished beams (with eos) from active beams
+            new_beam_codes = []
+            new_beam_scores = []
+            new_beam_past_kvs = []
+            new_beam_finished = []
+            new_beam_input_ids = []
+            
+            # Debug: print first and second step details
+            if step in [0, 1]:
+                print(f"\n>> [Step {step}] Token selection:")
+                for i in range(min(num_beams * 2, len(candidate_indices_flat))):
+                    source_beam = int(candidate_indices_flat[i] // vocab_size)
+                    token = int(candidate_indices_flat[i] % vocab_size)
+                    score = float(candidate_scores_flat[i])
+                    print(f"   Candidate {i}: source_beam={source_beam}, token={token}, score={score:.4f}")
+            
+            # PyTorch: if token is eos, add to beam_hyps; otherwise add to active beams
+            # We select top num_beams from NON-FINISHED candidates
+            beam_idx = 0
+            for i in range(len(candidate_indices_flat)):  # Iterate over all candidates
+                if beam_idx >= num_beams:
+                    break
+                    
+                source_beam_idx = int(candidate_indices_flat[i] // vocab_size)
+                token_id = int(candidate_indices_flat[i] % vocab_size)
+                score = float(candidate_scores_flat[i])
+                
+                # If this is a stop token, mark as finished and add to beams
+                if token_id == self.stop_mel_token:
+                    new_codes = mx.concatenate([beam_codes[source_beam_idx], 
+                                               mx.array([[token_id]], dtype=mx.int32)], axis=1)
+                    new_beam_codes.append(new_codes)
+                    new_beam_scores.append(score)
+                    new_beam_past_kvs.append(beam_past_kvs[source_beam_idx])  # Doesn't matter, won't use
+                    new_beam_finished.append(True)
+                    new_input_ids = beam_input_ids[source_beam_idx] + [token_id]
+                    new_beam_input_ids.append(new_input_ids)
+                    beam_idx += 1
+                # If source beam was already finished, skip this candidate
+                elif beam_finished[source_beam_idx]:
+                    continue  # Skip finished beams
+                # Otherwise, add as active beam
+                else:
+                    new_codes = mx.concatenate([beam_codes[source_beam_idx], 
+                                               mx.array([[token_id]], dtype=mx.int32)], axis=1)
+                    new_beam_codes.append(new_codes)
+                    new_beam_scores.append(score)
+                    new_beam_past_kvs.append(all_new_kvs[source_beam_idx])
+                    new_beam_finished.append(False)
+                    new_input_ids = beam_input_ids[source_beam_idx] + [token_id]
+                    new_beam_input_ids.append(new_input_ids)
+                    beam_idx += 1
+            
+            # Update beams
+            beam_codes = new_beam_codes
+            beam_scores = new_beam_scores
+            beam_past_kvs = new_beam_past_kvs
+            beam_finished = new_beam_finished
+            beam_input_ids = new_beam_input_ids
+            
+            # Debug: print step 0 and 1 results
+            if step in [0, 1]:
+                print(f"\n>> [Step {step}] After beam update:")
+                for i in range(len(beam_codes)):
+                    tokens = beam_codes[i][0].tolist()
+                    print(f"   Beam {i+1}: tokens={tokens}, score={beam_scores[i]:.4f}")
+        
+        # Select best beam (PyTorch uses generated_len, not total length)
+        # decoder_prompt_len = 1 (start_mel_token)
+        decoder_prompt_len = 1
+        
+        print(f"\n>> [Beam Search] Final beam selection:")
+        for i in range(num_beams):
+            total_length = beam_codes[i].shape[1]
+            generated_len = total_length - decoder_prompt_len  # PyTorch: cur_len - decoder_prompt_len
+            raw_score = beam_scores[i]
+            normalized_score = raw_score / (generated_len ** length_penalty) if generated_len > 0 else raw_score
+            print(f"   Beam {i+1}: total_len={total_length}, generated_len={generated_len}, raw_score={raw_score:.4f}, normalized={normalized_score:.4f}, finished={beam_finished[i]}")
+            # Print first 10 tokens
+            tokens_preview = beam_codes[i][0, :min(10, total_length)].tolist()
+            print(f"           First {min(10, total_length)} tokens: {tokens_preview}")
+        
+        best_idx = 0
+        generated_len_0 = beam_codes[0].shape[1] - decoder_prompt_len
+        best_score = beam_scores[0] / (generated_len_0 ** length_penalty) if generated_len_0 > 0 else beam_scores[0]
+        
+        for i in range(1, num_beams):
+            generated_len = beam_codes[i].shape[1] - decoder_prompt_len
+            score = beam_scores[i] / (generated_len ** length_penalty) if generated_len > 0 else beam_scores[i]
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        
+        # 🔧 Save all beams if requested (for debugging)
+        save_all_beams = kwargs.get('save_all_beams', False)
+        if save_all_beams:
+            print(f"\n>> [Beam Search] Saving all {num_beams} beams for comparison...")
+            all_beams_cleaned = []
+            for i in range(num_beams):
+                codes = beam_codes[i]
+                codes_list = codes[0].tolist()
+                # Remove stop token if present
+                if self.stop_mel_token in codes_list:
+                    stop_idx = codes_list.index(self.stop_mel_token)
+                    codes = codes[:, :stop_idx]
+                all_beams_cleaned.append(codes)
+                print(f"   Beam {i+1}: {codes.shape[1]} tokens (after removing stop)")
+        
+        best_codes = beam_codes[best_idx]
+        
+        # Remove stop token if present
+        codes_list = best_codes[0].tolist()
+        if self.stop_mel_token in codes_list:
+            stop_idx = codes_list.index(self.stop_mel_token)
+            best_codes = best_codes[:, :stop_idx]
+        
+        print(f">> [Beam Search] Complete: selected beam {best_idx+1}, {best_codes.shape[1]} tokens (normalized_score={best_score:.4f})")
+        
+        if save_all_beams:
+            return best_codes, all_beams_cleaned
+        else:
+            return best_codes
+    
+    def simple_forward(self, text_tokens, conditioning=None, max_length=1500, **kwargs):
+        """
+        Full forward pass with transformer layers for generation.
+        完全遵循PyTorch transformers的generation流程
+        
+        Args:
+            text_tokens: Text token IDs (batch, text_len) - MLX array
+            conditioning: Conditioning latent (batch, cond_len, model_dim) - MLX array
+            max_length: Maximum mel tokens to generate
+            **kwargs: Extra arguments including:
+                - temperature: float (default 1.0)
+                - repetition_penalty: float (default 1.0) 
+                - top_p: float (default 1.0)
+                - top_k: int (default 0)
+                - use_sampling: bool (default False)
+                - debug_generation: bool (default False)
             
         Returns:
             Generated mel codes (batch, mel_len) - MLX array
@@ -686,24 +1102,25 @@ class UnifiedVoiceMLX(nn.Module):
         # 每次推理使用新的随机种子（基于时间），确保推理独立性
         import time
         import os
+        from indextts.gpt.mlx_logits_processors import (
+            LogitsProcessorList,
+            TemperatureLogitsWarper,
+            RepetitionPenaltyLogitsProcessor,
+            TopPLogitsWarper,
+            TopKLogitsWarper,
+        )
         
         seed = kwargs.get('seed', None)
         if seed is None:
-            # 检查是否有固定种子的环境变量（用于调试）
+            # 检查是否有固定种子的环境变量（用于调试/复现）
             fixed_seed_str = os.environ.get('MLX_FIXED_SEED', None)
             if fixed_seed_str:
                 seed = int(fixed_seed_str)
             else:
-                # 🔧 修复首单词吞音：使用固定种子确保稳定性
-                # 而不是时间戳（会导致每次输出不同）
-                # 如果需要随机性，可以通过 seed 参数或 MLX_RANDOM_SEED=1 环境变量启用
-                use_random_seed = os.environ.get('MLX_RANDOM_SEED', '0') == '1'
-                if use_random_seed:
-                    # 随机模式：使用时间戳
-                    seed = int(time.time() * 1000000) % (2**32)
-                else:
-                    # 默认：固定种子，确保稳定输出
-                    seed = 42
+                # 🔧 修复：默认使用随机种子，避免固定种子对某些文本不友好
+                # 固定种子 (42) 会导致某些中文文本（如"今天天气真不错"）生成提前停止，丢字
+                # 用户可通过 MLX_FIXED_SEED 环境变量设置固定种子用于调试
+                seed = int(time.time() * 1000000) % (2**32)
         
         # Debug: 打印种子（可选）
         debug_generation = kwargs.get('debug_generation', False)
@@ -711,6 +1128,34 @@ class UnifiedVoiceMLX(nn.Module):
             print(f"[DEBUG] Random seed: {seed}")
         
         mx.random.seed(seed)
+        
+        # 🔧 按照PyTorch的方式构建logits_processor
+        # 参考: transformers.generation_utils._get_logits_processor
+        logits_processor = LogitsProcessorList()
+        
+        # 🔧 匹配PyTorch默认参数
+        temperature = kwargs.get('temperature', 1.0)
+        repetition_penalty = kwargs.get('repetition_penalty', 10.0)  # PyTorch默认10.0
+        top_p = kwargs.get('top_p', 1.0)
+        top_k = kwargs.get('top_k', 0)
+        
+        # 1. Temperature (PyTorch中最先应用)
+        if temperature is not None and temperature != 1.0:
+            logits_processor.append(TemperatureLogitsWarper(temperature))
+        
+        # 2. Repetition Penalty
+        if repetition_penalty is not None and repetition_penalty != 1.0:
+            logits_processor.append(RepetitionPenaltyLogitsProcessor(repetition_penalty))
+        
+        # 3. Top-k
+        if top_k is not None and top_k > 0:
+            logits_processor.append(TopKLogitsWarper(top_k))
+        
+        # 4. Top-p (nucleus sampling)
+        if top_p is not None and top_p < 1.0:
+            logits_processor.append(TopPLogitsWarper(top_p))
+        
+        print(f">> [MLX] Logits processors: {[type(p).__name__ for p in logits_processor]}")
         
         # Create default conditioning if not provided
         if conditioning is None:
@@ -800,21 +1245,31 @@ class UnifiedVoiceMLX(nn.Module):
             past_kvs.append(kv)
         hidden = self.final_norm(hidden)
         
-        # Get first token
-        logits = self.mel_head(hidden[:, -1:, :])
+        # Get first token - 完全按照PyTorch流程
+        # 1. 获取原始logits
+        next_token_logits = self.mel_head(hidden[:, -1:, :])  # (B, 1, vocab)
+        next_token_logits = next_token_logits[:, 0, :]  # (B, vocab) - 去掉seq维度
         
-        temperature = kwargs.get('temperature', 0.8)
-        use_sampling = kwargs.get('use_sampling', True)  # 可配置
+        # 2. 构建input_ids用于logits_processor (目前只有fake_inputs + start_mel_token)
+        # PyTorch在第一步时input_ids包含所有fake_inputs(conditioning) + start_mel_token
+        current_input_ids = mx.full((batch_size, context_len + 1), 1, dtype=mx.int32)  # fake inputs
+        current_input_ids[:, -1] = self.start_mel_token  # 最后一个是start_mel_token
         
-        if use_sampling and temperature > 0:
-            # 随机采样模式
-            logits = logits / temperature
-            probs = mx.softmax(logits[0, 0], axis=-1)
+        # 3. 应用logits_processor (temperature, repetition_penalty, top_p, top_k等)
+        next_token_scores = logits_processor(current_input_ids, next_token_logits)
+        
+        # 4. 根据use_sampling决定采样或argmax
+        use_sampling = kwargs.get('use_sampling', False)
+        
+        if use_sampling:
+            # 🔧 完全匹配PyTorch: probs = softmax(scores), then multinomial(probs)
+            probs = mx.softmax(next_token_scores[0], axis=-1)  # (vocab,)
+            # MLX categorical接受log_probs，所以用log(probs)或直接用scores
             next_token_id = mx.random.categorical(mx.log(probs + 1e-10))
             next_token = mx.array([[next_token_id]])
         else:
-            # 确定性模式（argmax）- 可能更稳定
-            next_token_id = mx.argmax(logits[0, 0])
+            # Greedy (argmax)
+            next_token_id = mx.argmax(next_token_scores[0])
             next_token = mx.array([[next_token_id]])
         
         token_val = int(next_token[0, 0])
@@ -869,22 +1324,60 @@ class UnifiedVoiceMLX(nn.Module):
             
             hidden = self.final_norm(hidden)
             
-            # Get next token logits
-            logits = self.mel_head(hidden)  # (B, 1, vocab)
+            # Get next token logits - 完全按照PyTorch流程
+            # 1. 获取原始logits
+            next_token_logits = self.mel_head(hidden)  # (B, 1, vocab)
+            next_token_logits = next_token_logits[:, 0, :]  # (B, vocab)
             
-            if use_sampling and temperature > 0:
-                # 随机采样模式
-                logits = logits / temperature
-                probs = mx.softmax(logits[0, 0], axis=-1)  # (vocab,)
-                next_token_id = mx.random.categorical(mx.log(probs + 1e-10))  # Sample
+            # 2. 构建当前的input_ids (用于logits_processor)
+            # PyTorch: input_ids = [fake_inputs... + start_mel + generated_tokens...]
+            # 我们需要维护完整的input_ids序列
+            generated_ids = []
+            for gen_tok in generated:
+                generated_ids.append(int(gen_tok[0, 0]))
+            
+            # 完整input_ids = fake_inputs(context_len个) + start_mel + generated
+            full_input_ids_list = [1] * context_len + [self.start_mel_token] + generated_ids
+            current_input_ids = mx.array([full_input_ids_list], dtype=mx.int32)  # (1, total_len)
+            
+            # 🔍 DEBUG: Token-by-token comparison (controlled by env var)
+            import os
+            debug_token_by_token = os.environ.get('DEBUG_TOKEN_BY_TOKEN', '0') == '1'
+            if debug_token_by_token and step <= 10:
+                print(f"\n🔍 [MLX Step {step}] absolute_pos={absolute_pos}")
+                print(f"   generated tokens so far: {generated_ids}")
+                
+                # Show top-5 logits BEFORE any processing
+                logits_np = next_token_logits[0].tolist()
+                top5_indices = sorted(range(len(logits_np)), key=lambda i: logits_np[i], reverse=True)[:5]
+                print(f"   Top-5 logits (before processor): {[(idx, logits_np[idx]) for idx in top5_indices]}")
+            
+            # 3. 应用logits_processor (这里包含temperature, repetition_penalty, top_p, top_k等)
+            next_token_scores = logits_processor(current_input_ids, next_token_logits)
+            
+            # 🔍 DEBUG: Show top-5 after processor
+            if debug_token_by_token and step <= 10:
+                scores_np = next_token_scores[0].tolist()
+                top5_indices = sorted(range(len(scores_np)), key=lambda i: scores_np[i], reverse=True)[:5]
+                print(f"   Top-5 scores (after processor): {[(idx, scores_np[idx]) for idx in top5_indices]}")
+            
+            # 4. 根据use_sampling决定采样或argmax
+            if use_sampling:
+                # 🔧 完全匹配PyTorch: probs = softmax(scores), then multinomial(probs)
+                probs = mx.softmax(next_token_scores[0], axis=-1)
+                next_token_id = mx.random.categorical(mx.log(probs + 1e-10))
                 next_token = mx.array([[next_token_id]])  # (1, 1)
             else:
-                # 确定性模式（argmax）
-                next_token_id = mx.argmax(logits[0, 0])
+                # Greedy (argmax)
+                next_token_id = mx.argmax(next_token_scores[0])
                 next_token = mx.array([[next_token_id]])
             
             # Check stop token
             token_val = int(next_token[0, 0])
+            
+            # 🔍 DEBUG: Show selected token
+            if debug_token_by_token and step <= 10:
+                print(f"   Selected token: {token_val}")
             
             
             if token_val == self.stop_mel_token:
@@ -1199,21 +1692,61 @@ class UnifiedVoiceMLX(nn.Module):
         # Convert text to MLX
         text_mlx = torch_to_mlx(text_inputs)
         
-        # Generate codes using full transformer
-        print(f">> [MLX] Starting generation (max_length={kwargs.get('max_generate_length', 1500)})")
-        codes_mlx = self.simple_forward(
-            text_mlx,
-            conds_mlx,
-            max_length=kwargs.get('max_generate_length', 500),  # Reduce default for testing
-            temperature=kwargs.get('temperature', 0.8),
-            use_sampling=kwargs.get('use_sampling', True),  # 传递采样模式
-            debug_generation=kwargs.get('debug_generation', False),  # 传递 debug 模式
-        )
+        # Generate codes using beam search or greedy/sampling
+        num_beams = kwargs.get('num_beams', 15)  # 默认 15，最高稳定性
+        
+        if num_beams > 1:
+            # Use beam search (most stable, matches PyTorch behavior)
+            print(f">> [MLX] Starting generation with beam search (num_beams={num_beams})")
+            # Prepare beam search kwargs, removing already-passed parameters
+            beam_kwargs = {k: v for k, v in kwargs.items() 
+                          if k not in ['max_generate_length', 'num_beams', 'length_penalty', 'save_all_beams']}
+            beam_result = self.beam_search_forward(
+                text_mlx,
+                conds_mlx,
+                max_length=kwargs.get('max_generate_length', 1500),
+                num_beams=num_beams,
+                length_penalty=kwargs.get('length_penalty', 1.0),
+                save_all_beams=kwargs.get('save_all_beams', False),
+                **beam_kwargs
+            )
+            # Handle tuple return if save_all_beams=True
+            if isinstance(beam_result, tuple):
+                codes_mlx, all_beams_mlx = beam_result
+            else:
+                codes_mlx = beam_result
+                all_beams_mlx = None
+        else:
+            # Use greedy/sampling (faster but less stable)
+            # 🔧 MATCH PYTORCH: When num_beams=1, PyTorch uses do_sample=True (multinomial)
+            # So we enable sampling by default for num_beams=1 to match PyTorch behavior
+            use_sampling = kwargs.get('use_sampling', True)  # 🔧 Changed: True for num_beams=1
+            print(f">> [MLX] Starting generation with {'sampling (multinomial)' if use_sampling else 'greedy (argmax)'}")
+            codes_mlx = self.simple_forward(
+                text_mlx,
+                conds_mlx,
+                max_length=kwargs.get('max_generate_length', 1500),
+                temperature=kwargs.get('temperature', 0.8),
+                use_sampling=use_sampling,
+                debug_generation=kwargs.get('debug_generation', False),
+            )
+            all_beams_mlx = None  # No beams in greedy/sampling mode
+        
         print(f">> [MLX] Generation complete")
         
         # Convert to PyTorch with correct dtype
         codes = mlx_to_torch(codes_mlx, device='cpu').long().to(speech_condition.device)
         speech_conditioning_latent_torch = mlx_to_torch(speech_conditioning_latent_mlx, device=speech_condition.device)
+        
+        # Convert all beams if requested
+        if all_beams_mlx is not None:
+            all_beams_torch = []
+            for beam_mlx in all_beams_mlx:
+                beam_torch = mlx_to_torch(beam_mlx, device='cpu').long().to(speech_condition.device)
+                all_beams_torch.append(beam_torch)
+            print(f">> [MLX Native] Generated {len(all_beams_torch)} beams for comparison")
+        else:
+            all_beams_torch = None
         
         print(f">> [MLX Native] Generated {codes.shape[1]} mel tokens with pure MLX conditioning")
         
@@ -1222,8 +1755,10 @@ class UnifiedVoiceMLX(nn.Module):
             # 删除大的中间 MLX 数组
             del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
             del speech_conditioning_latent_mlx, emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
+            if all_beams_mlx is not None:
+                del all_beams_mlx
             # 清理 MLX 缓存和Metal资源
-            mx.metal.clear_cache()
+            mx.clear_cache()
             # 强制垃圾回收
             import gc
             gc.collect()
@@ -1231,7 +1766,10 @@ class UnifiedVoiceMLX(nn.Module):
             # 静默失败，不影响返回结果
             pass
         
-        return codes, speech_conditioning_latent_torch
+        if all_beams_torch is not None:
+            return codes, speech_conditioning_latent_torch, all_beams_torch
+        else:
+            return codes, speech_conditioning_latent_torch
 
 
 def create_mlx_gpt_from_cache(mlx_cache_dict, config):

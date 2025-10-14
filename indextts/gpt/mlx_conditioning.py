@@ -404,9 +404,6 @@ class MLXConvolutionModule(nn.Module):
     def __init__(self, channels: int, kernel_size: int = 31):
         super().__init__()
         
-        # Layer normalization
-        self.norm = nn.LayerNorm(channels, eps=1e-05)  # eps匹配PyTorch
-        
         # Pointwise expansion (for GLU: 2x channels)
         self.pointwise1 = nn.Linear(channels, 2 * channels)
         
@@ -414,7 +411,7 @@ class MLXConvolutionModule(nn.Module):
         padding = kernel_size // 2
         self.depthwise = MLXDepthwiseConv1d(channels, kernel_size, padding)
         
-        # Batch normalization (use LayerNorm)
+        # Norm after depthwise (matches PyTorch)
         self.bn = nn.LayerNorm(channels, eps=1e-05)  # eps匹配PyTorch
         
         # Pointwise projection
@@ -429,26 +426,24 @@ class MLXConvolutionModule(nn.Module):
         Returns:
             Output (batch, seq, channels)
         """
-        # Layer norm
-        x = self.norm(x)
-        
-        # Pointwise expansion
+        # ✅ FIX: 按照PyTorch顺序
+        # 1. Pointwise expansion (NOT norm first!)
         x = self.pointwise1(x)  # (batch, seq, 2*channels)
         
-        # GLU: split and gate
+        # 2. GLU: split and gate
         x1, x2 = mx.split(x, 2, axis=-1)
         x = x1 * nn.sigmoid(x2)  # (batch, seq, channels)
         
-        # Depthwise convolution
+        # 3. Depthwise convolution
         x = self.depthwise(x)
         
-        # Batch norm
+        # 4. Norm (after depthwise)
         x = self.bn(x)
         
-        # Swish activation
+        # 5. Swish activation
         x = x * nn.sigmoid(x)
         
-        # Pointwise projection
+        # 6. Pointwise projection
         x = self.pointwise2(x)
         
         # Apply mask if provided
@@ -608,15 +603,17 @@ class MLXConformerEncoder(nn.Module):
         # ✅ FIX: Apply Conv2d subsampling (seq_len → seq_len // 2)
         x = self.subsampling(x)  # (batch, seq_len//2, output_dim)
         
-        # ✅ FIX: Apply xscale and add positional encoding (matches PyTorch)
-        # PyTorch: x = x * xscale + pos_emb
+        # ✅ FIX: Apply xscale ONLY (matches PyTorch)
+        # PyTorch: x = x * xscale (pos_emb is separate!)
+        x = x * self.xscale  # ✅ CRITICAL: xscale = sqrt(512) = 22.627
+        
+        # ✅ FIX: Get positional encoding (separate from x)
         seq_len = x.shape[1]
         pos_emb = self.pos_encoding[:seq_len]
         pos_emb = mx.broadcast_to(
             pos_emb.reshape(1, seq_len, self.output_dim),
             (x.shape[0], seq_len, self.output_dim)
         )
-        x = x * self.xscale + pos_emb  # ✅ CRITICAL: xscale = sqrt(512) = 22.627
         
         # Create mask if lengths provided (adjust for subsampling)
         mask = None
