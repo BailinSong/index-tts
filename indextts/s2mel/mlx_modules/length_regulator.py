@@ -206,7 +206,9 @@ class MLXInterpolateRegulator(nn.Module):
         mask = mask[:, :, None]  # (batch, max_target_len, 1) for broadcasting
         
         # x shape: (batch, time, channels)
-        # MLX Conv1d expects (batch, length, channels), so we keep this format!
+        # NOTE: MLX Conv1d in this codebase expects input as (batch, length, channels)
+        # But the Conv1d weights are stored as (out_channels, in_channels, kernel_size)
+        # which matches PyTorch format
         
         # Interpolate if needed (work on time dimension)
         if self.interpolate:
@@ -253,7 +255,9 @@ class MLXInterpolateRegulator(nn.Module):
                 x = x + f0_emb
         
         # Apply model layers sequentially
-        # x shape: (batch, time, channels) - MLX Conv1d format
+        # x shape: (batch, time, channels)
+        # MLX Conv1d layers expect (batch, length, channels) format
+        # The weights are (out_channels, in_channels, kernel_size) matching PyTorch
         for i, layer in enumerate(self.model):
             x = layer(x)
         

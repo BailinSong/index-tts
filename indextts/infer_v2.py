@@ -197,10 +197,83 @@ class IndexTTS2:
         # Load S2MEL model with MLX caching if enabled
         s2mel_path = os.path.join(self.model_dir, self.cfg.s2mel_checkpoint)
         
+        # Initialize MLX S2MEL modules
+        self.mlx_s2mel_gpt_layer = None
+        self.mlx_s2mel_length_regulator = None
+        
         if self.use_mlx and self.mlx_available:
             print("\n>> [Model 2/4] Loading S2MEL with MLX optimization...")
             mlx_s2mel_weights = self.mlx_cache.get_or_convert("s2mel", s2mel_path)
             print(">> MLX S2MEL weights ready")
+            
+            # Create MLX versions of S2MEL modules
+            try:
+                from indextts.s2mel.mlx_modules import MLXGPTLayer, MLXInterpolateRegulator
+                
+                # GPT Layer (1280→1024)
+                print(">> Creating MLX GPT Layer...")
+                self.mlx_s2mel_gpt_layer = MLXGPTLayer()
+                # Load weights from cache (no 'models.' prefix in cache)
+                prefix = 'gpt_layer.'
+                if f'{prefix}0.weight' in mlx_s2mel_weights:
+                    self.mlx_s2mel_gpt_layer.layer1.weight = mlx_s2mel_weights[f'{prefix}0.weight']
+                    self.mlx_s2mel_gpt_layer.layer1.bias = mlx_s2mel_weights[f'{prefix}0.bias']
+                    self.mlx_s2mel_gpt_layer.layer2.weight = mlx_s2mel_weights[f'{prefix}1.weight']
+                    self.mlx_s2mel_gpt_layer.layer2.bias = mlx_s2mel_weights[f'{prefix}1.bias']
+                    self.mlx_s2mel_gpt_layer.layer3.weight = mlx_s2mel_weights[f'{prefix}2.weight']
+                    self.mlx_s2mel_gpt_layer.layer3.bias = mlx_s2mel_weights[f'{prefix}2.bias']
+                    print("   ✓ MLX GPT Layer weights loaded")
+                else:
+                    print("   ⚠️  GPT Layer weights not found in cache, will use PyTorch")
+                    self.mlx_s2mel_gpt_layer = None
+                
+                # Length Regulator
+                print(">> Creating MLX Length Regulator...")
+                self.mlx_s2mel_length_regulator = MLXInterpolateRegulator(
+                    channels=self.cfg.s2mel.length_regulator.channels,
+                    sampling_ratios=self.cfg.s2mel.length_regulator.sampling_ratios,
+                    is_discrete=self.cfg.s2mel.length_regulator.is_discrete,
+                    in_channels=self.cfg.s2mel.length_regulator.in_channels if hasattr(self.cfg.s2mel.length_regulator, "in_channels") else None,
+                    vector_quantize=self.cfg.s2mel.length_regulator.vector_quantize if hasattr(self.cfg.s2mel.length_regulator, "vector_quantize") else False,
+                    codebook_size=self.cfg.s2mel.length_regulator.content_codebook_size,
+                    n_codebooks=self.cfg.s2mel.length_regulator.n_codebooks if hasattr(self.cfg.s2mel.length_regulator, "n_codebooks") else 1,
+                    f0_condition=self.cfg.s2mel.length_regulator.f0_condition if hasattr(self.cfg.s2mel.length_regulator, "f0_condition") else False,
+                    n_f0_bins=self.cfg.s2mel.length_regulator.n_f0_bins if hasattr(self.cfg.s2mel.length_regulator, "n_f0_bins") else 512,
+                )
+                # Load Length Regulator weights (no 'models.' prefix in cache)
+                lr_prefix = 'length_regulator.'
+                lr_weights_found = False
+                # Check if weights exist and load them
+                if f'{lr_prefix}content_in_proj.weight' in mlx_s2mel_weights:
+                    self.mlx_s2mel_length_regulator.content_in_proj.weight = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.weight']
+                    self.mlx_s2mel_length_regulator.content_in_proj.bias = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.bias']
+                    lr_weights_found = True
+                # Load model layers
+                layer_idx = 0
+                while f'{lr_prefix}model.{layer_idx}.weight' in mlx_s2mel_weights:
+                    if layer_idx < len(self.mlx_s2mel_length_regulator.model):
+                        mlx_layer = self.mlx_s2mel_length_regulator.model[layer_idx]
+                        if hasattr(mlx_layer, 'weight'):
+                            mlx_layer.weight = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.weight']
+                            if f'{lr_prefix}model.{layer_idx}.bias' in mlx_s2mel_weights:
+                                mlx_layer.bias = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.bias']
+                            lr_weights_found = True
+                    layer_idx += 1
+                
+                if lr_weights_found:
+                    print("   ✓ MLX Length Regulator weights loaded")
+                else:
+                    print("   ⚠️  Length Regulator weights not found in cache, will use PyTorch")
+                    self.mlx_s2mel_length_regulator = None
+                
+                if self.mlx_s2mel_gpt_layer or self.mlx_s2mel_length_regulator:
+                    print(">> ✓ S2MEL MLX modules ready")
+            except Exception as e:
+                print(f">> MLX S2MEL module creation failed: {e}")
+                import traceback
+                traceback.print_exc()
+                self.mlx_s2mel_gpt_layer = None
+                self.mlx_s2mel_length_regulator = None
         
         s2mel = MyModel(self.cfg.s2mel, use_gpt_latent=True)
         s2mel, _, _, _ = load_checkpoint2(
@@ -590,6 +663,23 @@ class IndexTTS2:
             feat = feat - feat.mean(dim=0, keepdim=True)  # feat2另外一个滤波器能量组特征[922, 80]
             style = self.campplus_model(feat.unsqueeze(0))  # 参考音频的全局style2[1,192]
 
+            # 暂时禁用MLX length_regulator（生成音频有严重问题）
+            # if self.use_mlx and self.mlx_s2mel_length_regulator is not None:
+            #     # MLX版本
+            #     import mlx.core as mx
+            #     from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+            #     S_ref_mlx = torch_to_mlx(S_ref.cpu())
+            #     ref_target_lengths_mlx = torch_to_mlx(ref_target_lengths.cpu())
+            #     prompt_condition_mlx, _, _, _, _ = self.mlx_s2mel_length_regulator(
+            #         S_ref_mlx,
+            #         ylens=ref_target_lengths_mlx,
+            #         n_quantizers=None,
+            #         f0=None
+            #     )
+            #     mx.eval(prompt_condition_mlx)
+            #     prompt_condition = mlx_to_torch(prompt_condition_mlx).to(self.device)
+            # else:
+            # PyTorch版本（稳定）
             prompt_condition = self.s2mel.models['length_regulator'](S_ref,
                                                                      ylens=ref_target_lengths,
                                                                      n_quantizers=3,
@@ -833,6 +923,17 @@ class IndexTTS2:
                     
                     # Profiling: gpt_layer
                     t0 = time.perf_counter()
+                    # 暂时禁用MLX gpt_layer（性能倒退 + 可能有bug）
+                    # if self.use_mlx and self.mlx_s2mel_gpt_layer is not None:
+                    #     # MLX版本
+                    #     import mlx.core as mx
+                    #     from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+                    #     latent_mlx = torch_to_mlx(latent.cpu())
+                    #     latent_mlx = self.mlx_s2mel_gpt_layer(latent_mlx)
+                    #     mx.eval(latent_mlx)
+                    #     latent = mlx_to_torch(latent_mlx).to(self.device)
+                    # else:
+                    # PyTorch版本（稳定）
                     latent = self.s2mel.models['gpt_layer'](latent)
                     t_gpt_layer = time.perf_counter() - t0
                     
@@ -850,6 +951,23 @@ class IndexTTS2:
                     
                     # Profiling: length_regulator
                     t0 = time.perf_counter()
+                    # 暂时禁用MLX length_regulator（生成音频有严重问题）
+                    # if self.use_mlx and self.mlx_s2mel_length_regulator is not None:
+                    #     # MLX版本
+                    #     import mlx.core as mx
+                    #     from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+                    #     S_infer_mlx = torch_to_mlx(S_infer.cpu())
+                    #     target_lengths_mlx = torch_to_mlx(target_lengths.cpu())
+                    #     cond_mlx, _, _, _, _ = self.mlx_s2mel_length_regulator(
+                    #         S_infer_mlx,
+                    #         ylens=target_lengths_mlx,
+                    #         n_quantizers=None,
+                    #         f0=None
+                    #     )
+                    #     mx.eval(cond_mlx)
+                    #     cond = mlx_to_torch(cond_mlx).to(self.device)
+                    # else:
+                    # PyTorch版本（稳定）
                     cond = self.s2mel.models['length_regulator'](S_infer,
                                                                  ylens=target_lengths,
                                                                  n_quantizers=3,
