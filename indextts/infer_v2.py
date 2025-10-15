@@ -983,18 +983,34 @@ class IndexTTS2:
                 m_start_time = time.perf_counter()
                 use_speed = torch.zeros(spk_cond_emb.size(0)).to(spk_cond_emb.device).long()
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
-                    latent = self.gpt(
-                        speech_conditioning_latent,
-                        text_tokens,
-                        torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
-                        codes,
-                        torch.tensor([codes.shape[-1]], device=text_tokens.device),
-                        emo_cond_emb,
-                        cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_vec=emovec,
-                        use_speed=use_speed,
-                    )
+                    if self.gpt_is_mlx:
+                        latent = self.mlx_transformer(
+                            speech_conditioning_latent,
+                            text_tokens,
+                            torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
+                            codes,
+                            torch.tensor([codes.shape[-1]], device=text_tokens.device),
+                            emo_cond_emb,
+                            cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_vec=emovec,
+                            use_speed=use_speed,
+                        )
+                    else:
+                        if self.gpt is None:
+                            raise RuntimeError("PyTorch GPT not loaded.")
+                        latent = self.gpt(
+                            speech_conditioning_latent,
+                            text_tokens,
+                            torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
+                            codes,
+                            torch.tensor([codes.shape[-1]], device=text_tokens.device),
+                            emo_cond_emb,
+                            cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_vec=emovec,
+                            use_speed=use_speed,
+                        )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
                 dtype = None
