@@ -921,6 +921,10 @@ class IndexTTS2:
                             if 'mps' in str(self.device):
                                 torch.mps.synchronize()
                     else:
+                        # PyTorch inference
+                        if self.gpt is None:
+                            raise RuntimeError("PyTorch GPT not loaded. Cannot use PyTorch inference.")
+                        
                         # 🔧 For debugging: force greedy decoding when num_beams=1 for deterministic output
                         # PyTorch's do_sample=True is not deterministic even with fixed seed
                         use_sampling_mode = False if num_beams == 1 else do_sample
