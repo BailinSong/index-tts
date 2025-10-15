@@ -1181,6 +1181,13 @@ class UnifiedVoiceMLX(nn.Module):
         # 每次推理使用新的随机种子（基于时间），确保推理独立性
         import time
         import os
+        # 🚀 使用优化版本的logits processors
+        # ⚠️ 暂时禁用优化版本，等待调试完成
+        use_optimized = False
+        # try:
+        #     from indextts.gpt.mlx_logits_processors_optimized import LogitsProcessorList
+        #     use_optimized = True
+        # except ImportError:
         from indextts.gpt.mlx_logits_processors import (
             LogitsProcessorList,
             TemperatureLogitsWarper,
@@ -1188,6 +1195,7 @@ class UnifiedVoiceMLX(nn.Module):
             TopPLogitsWarper,
             TopKLogitsWarper,
         )
+        #     use_optimized = False
         
         seed = kwargs.get('seed', None)
         if seed is None:
@@ -1210,7 +1218,6 @@ class UnifiedVoiceMLX(nn.Module):
         
         # 🔧 按照PyTorch的方式构建logits_processor
         # 参考: transformers.generation_utils._get_logits_processor
-        logits_processor = LogitsProcessorList()
         
         # 🔧 匹配PyTorch默认参数
         temperature = kwargs.get('temperature', 1.0)
@@ -1218,23 +1225,33 @@ class UnifiedVoiceMLX(nn.Module):
         top_p = kwargs.get('top_p', 1.0)
         top_k = kwargs.get('top_k', 0)
         
-        # 1. Temperature (PyTorch中最先应用)
-        if temperature is not None and temperature != 1.0:
-            logits_processor.append(TemperatureLogitsWarper(temperature))
-        
-        # 2. Repetition Penalty
-        if repetition_penalty is not None and repetition_penalty != 1.0:
-            logits_processor.append(RepetitionPenaltyLogitsProcessor(repetition_penalty))
-        
-        # 3. Top-k
-        if top_k is not None and top_k > 0:
-            logits_processor.append(TopKLogitsWarper(top_k))
-        
-        # 4. Top-p (nucleus sampling)
-        if top_p is not None and top_p < 1.0:
-            logits_processor.append(TopPLogitsWarper(top_p))
-        
-        print(f">> [MLX] Logits processors: {[type(p).__name__ for p in logits_processor]}")
+        # 🚀 优化：使用优化版本的processor（自动选择最优组合）
+        if use_optimized:
+            logits_processor = LogitsProcessorList.create_optimized(
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
+                top_p=top_p,
+                top_k=top_k
+            )
+            print(f">> [MLX] Logits processors (optimized): {[type(p).__name__ for p in logits_processor]}")
+        else:
+            # 回退到原始实现
+            from indextts.gpt.mlx_logits_processors import (
+                TemperatureLogitsWarper,
+                RepetitionPenaltyLogitsProcessor,
+                TopPLogitsWarper,
+                TopKLogitsWarper,
+            )
+            logits_processor = LogitsProcessorList()
+            if temperature is not None and temperature != 1.0:
+                logits_processor.append(TemperatureLogitsWarper(temperature))
+            if repetition_penalty is not None and repetition_penalty != 1.0:
+                logits_processor.append(RepetitionPenaltyLogitsProcessor(repetition_penalty))
+            if top_k is not None and top_k > 0:
+                logits_processor.append(TopKLogitsWarper(top_k))
+            if top_p is not None and top_p < 1.0:
+                logits_processor.append(TopPLogitsWarper(top_p))
+            print(f">> [MLX] Logits processors: {[type(p).__name__ for p in logits_processor]}")
         
         # Create default conditioning if not provided
         if conditioning is None:
