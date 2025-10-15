@@ -802,13 +802,22 @@ class IndexTTS2:
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
                     # Profiling: emovec计算
                     t0_emovec = time.perf_counter()
-                    emovec = self.gpt.merge_emovec(
-                        spk_cond_emb,
-                        emo_cond_emb,
-                        torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        alpha=emo_alpha
-                    )
+                    if self.gpt_is_mlx:
+                        emovec = self.mlx_transformer.merge_emovec(
+                            spk_cond_emb,
+                            emo_cond_emb,
+                            torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            alpha=emo_alpha
+                        )
+                    else:
+                        emovec = self.gpt.merge_emovec(
+                            spk_cond_emb,
+                            emo_cond_emb,
+                            torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            alpha=emo_alpha
+                        )
 
                     if emo_vector is not None:
                         emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
