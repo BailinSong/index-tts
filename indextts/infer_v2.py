@@ -767,6 +767,12 @@ class IndexTTS2:
         wavs = []
         gpt_gen_time = 0
         gpt_forward_time = 0
+        # GPT生成详细计时
+        gpt_emovec_time = 0
+        gpt_conditioning_time = 0
+        gpt_to_mlx_time = 0
+        gpt_generation_time = 0
+        gpt_from_mlx_time = 0
         s2mel_time = 0
         bigvgan_time = 0
         has_warned = False
@@ -787,6 +793,8 @@ class IndexTTS2:
             m_start_time = time.perf_counter()
             with torch.no_grad():
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
+                    # Profiling: emovec计算
+                    t0_emovec = time.perf_counter()
                     emovec = self.gpt.merge_emovec(
                         spk_cond_emb,
                         emo_cond_emb,
@@ -798,12 +806,15 @@ class IndexTTS2:
                     if emo_vector is not None:
                         emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
                         # emovec = emovec_mat
+                    gpt_emovec_time += time.perf_counter() - t0_emovec
 
                     # Use MLX inference if enabled
                     if self.gpt_is_mlx and self.mlx_transformer is not None:
                         # Check if using pure MLX or hybrid mode
                         if hasattr(self.mlx_transformer, 'use_mlx_conditioning') and self.mlx_transformer.use_mlx_conditioning:
-                            # Pure MLX mode
+                            # Pure MLX mode  
+                            # 注意：generation时间已包含在gpt_gen_time中（通过m_start_time计时）
+                            # 这里不再单独计时，避免重复
                             codes, speech_conditioning_latent = self.mlx_transformer.inference_speech(
                                 spk_cond_emb,
                                 text_tokens,
@@ -820,6 +831,8 @@ class IndexTTS2:
                             # Hybrid mode: PyTorch conditioning + MLX transformer
                             from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
                             
+                            # Profiling: Conditioning准备
+                            t0_cond = time.perf_counter()
                             cond_lengths_t = torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device)
                             speech_conditioning_latent = self.gpt.get_conditioning(
                                 spk_cond_emb.transpose(1, 2), cond_lengths_t
@@ -834,10 +847,16 @@ class IndexTTS2:
                                 duration_emb_half.unsqueeze(1),
                                 duration_emb.unsqueeze(1)
                             ), dim=1)
+                            gpt_conditioning_time += time.perf_counter() - t0_cond
                             
+                            # Profiling: 转换到MLX
+                            t0_to_mlx = time.perf_counter()
                             conds_mlx = torch_to_mlx(conds_latent)
                             text_mlx = torch_to_mlx(text_tokens)
+                            gpt_to_mlx_time += time.perf_counter() - t0_to_mlx
                             
+                            # Profiling: MLX生成
+                            t0_gen = time.perf_counter()
                             codes_mlx = self.mlx_transformer.simple_forward(
                                 text_mlx,
                                 conditioning=conds_mlx,
@@ -1031,6 +1050,17 @@ class IndexTTS2:
         wav = torch.cat(wavs, dim=1)
         wav_length = wav.shape[-1] / sampling_rate
         print(f">> gpt_gen_time: {gpt_gen_time:.2f} seconds")
+        if gpt_emovec_time > 0:
+            # 计算实际generation时间（总时间 - emovec）
+            actual_generation = gpt_gen_time - gpt_emovec_time
+            print(f"   ├─ emovec: {gpt_emovec_time:.2f}s ({gpt_emovec_time/gpt_gen_time*100:.1f}%)")
+            print(f"   └─ MLX inference: {actual_generation:.2f}s ({actual_generation/gpt_gen_time*100:.1f}%)")
+            if gpt_conditioning_time > 0 or gpt_to_mlx_time > 0 or gpt_from_mlx_time > 0:
+                # Hybrid模式的详细拆分
+                print(f"      ├─ conditioning: {gpt_conditioning_time:.2f}s")
+                print(f"      ├─ torch→mlx: {gpt_to_mlx_time:.2f}s")
+                print(f"      ├─ generation: {gpt_generation_time:.2f}s")
+                print(f"      └─ mlx→torch: {gpt_from_mlx_time:.2f}s")
         print(f">> gpt_forward_time: {gpt_forward_time:.2f} seconds")
         print(f">> s2mel_time: {s2mel_time:.2f} seconds")
         print(f">> bigvgan_time: {bigvgan_time:.2f} seconds")
