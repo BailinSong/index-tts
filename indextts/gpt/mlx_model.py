@@ -1871,13 +1871,13 @@ class UnifiedVoiceMLX(nn.Module):
         
         # 🔧 修复内存泄漏和状态累积：清理 MLX 中间结果
         try:
-            # 删除大的中间 MLX 数组
+            # 删除大的中间 MLX 数组（保留conds_mlx如果需要缓存）
             del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
-            # 清理MLX中间结果（保留speech_conditioning_latent_mlx如果需要缓存）
-            del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
+            del speech_conditioning_latent_mlx  # 不再需要缓存这个
+            del emo_vec_mlx
             if not return_conditioning_mlx:
-                del speech_conditioning_latent_mlx
-            del emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
+                del conds_mlx  # 如果不需要缓存，删除conds_mlx
+            del text_mlx, codes_mlx
             if all_beams_mlx is not None:
                 del all_beams_mlx
             # 清理 MLX 缓存和Metal资源
@@ -1891,12 +1891,14 @@ class UnifiedVoiceMLX(nn.Module):
         
         if all_beams_torch is not None:
             if return_conditioning_mlx:
-                return codes, speech_conditioning_latent_torch, all_beams_torch, speech_conditioning_latent_mlx
+                # 🔥 关键修复：返回完整的conds_mlx（包含emotion+duration），而不是speech_conditioning_latent_mlx
+                return codes, speech_conditioning_latent_torch, all_beams_torch, conds_mlx
             else:
                 return codes, speech_conditioning_latent_torch, all_beams_torch
         else:
             if return_conditioning_mlx:
-                return codes, speech_conditioning_latent_torch, speech_conditioning_latent_mlx
+                # 🔥 关键修复：返回完整的conds_mlx（包含emotion+duration），而不是speech_conditioning_latent_mlx
+                return codes, speech_conditioning_latent_torch, conds_mlx
             else:
                 return codes, speech_conditioning_latent_torch
 

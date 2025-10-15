@@ -363,8 +363,9 @@ class IndexTTS2:
         self.cache_spk_audio_prompt = None
         self.cache_emo_cond = None
         self.cache_emo_audio_prompt = None
-        # GPT Conditioning缓存（技术验证）
-        self.cache_gpt_conditioning_latent = None  # speech_conditioning_latent
+        # GPT Conditioning缓存（技术验证）- 需要缓存两个格式
+        self.cache_gpt_conditioning_latent_mlx = None  # MLX format（用于generation）
+        self.cache_gpt_conditioning_latent_torch = None  # PyTorch format（用于forward保留音色）
         self.cache_mel = None
 
         # 进度引用显示（可选）
@@ -654,7 +655,8 @@ class IndexTTS2:
                 self.cache_s2mel_style = None
                 self.cache_s2mel_prompt = None
                 self.cache_mel = None
-                self.cache_gpt_conditioning_latent = None  # 清除GPT Conditioning缓存
+                self.cache_gpt_conditioning_latent_mlx = None  # 清除GPT Conditioning缓存
+                self.cache_gpt_conditioning_latent_torch = None
                 torch.cuda.empty_cache()
             audio,sr = self._load_and_cut_audio(spk_audio_prompt,15,verbose)
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
@@ -819,10 +821,11 @@ class IndexTTS2:
                         if hasattr(self.mlx_transformer, 'use_mlx_conditioning') and self.mlx_transformer.use_mlx_conditioning:
                             # Pure MLX mode
                             # 🚀 优化：检查GPT Conditioning缓存
-                            if self.cache_gpt_conditioning_latent is not None:
+                            if self.cache_gpt_conditioning_latent_mlx is not None:
                                 # 缓存命中：直接用缓存的conditioning进行generation
                                 print(f">> [Cache Hit] Using cached GPT conditioning")
-                                print(f"   Cached conditioning shape: {self.cache_gpt_conditioning_latent.shape}")
+                                print(f"   Cached MLX shape: {self.cache_gpt_conditioning_latent_mlx.shape}")
+                                print(f"   Cached Torch shape: {self.cache_gpt_conditioning_latent_torch.shape}")
                                 from indextts.utils.mlx_utils import torch_to_mlx
                                 
                                 # 只需要转换text和执行generation
@@ -831,7 +834,7 @@ class IndexTTS2:
                                 print(f">> [Cache] Running generation with cached conditioning...")
                                 codes = self.mlx_transformer.simple_forward(
                                     text_mlx,
-                                    conditioning=self.cache_gpt_conditioning_latent,  # 使用缓存
+                                    conditioning=self.cache_gpt_conditioning_latent_mlx,  # 使用MLX缓存
                                     max_length=max_mel_tokens,
                                     temperature=temperature,
                                     use_sampling=generation_kwargs.get('use_sampling', True),
@@ -841,7 +844,9 @@ class IndexTTS2:
                                 from indextts.utils.mlx_utils import mlx_to_torch
                                 codes = mlx_to_torch(codes, device='cpu').long().to(text_tokens.device)
                                 print(f">> [Cache] Codes converted: {codes.shape}")
-                                speech_conditioning_latent = None  # 不需要返回
+                                # 🔥 关键修复：使用缓存的PyTorch conditioning（保留音色特征！）
+                                speech_conditioning_latent = self.cache_gpt_conditioning_latent_torch
+                                print(f">> [Cache] Using cached PyTorch conditioning (preserves voice): {speech_conditioning_latent.shape}")
                             else:
                                 # 缓存未命中：完整计算并缓存
                                 print(f">> [Cache Miss] Computing GPT conditioning...")
@@ -861,9 +866,12 @@ class IndexTTS2:
                                 # 解包返回值
                                 if len(result) == 3:
                                     codes, speech_conditioning_latent, cond_latent_mlx = result
-                                    # 缓存MLX格式的conditioning
-                                    self.cache_gpt_conditioning_latent = cond_latent_mlx
-                                    print(f">> [Cache] GPT conditioning cached (MLX format)")
+                                    # 🔥 关键：缓存MLX和PyTorch两个格式
+                                    self.cache_gpt_conditioning_latent_mlx = cond_latent_mlx
+                                    self.cache_gpt_conditioning_latent_torch = speech_conditioning_latent.clone()
+                                    print(f">> [Cache] GPT conditioning cached (MLX + Torch)")
+                                    print(f"   MLX shape: {cond_latent_mlx.shape}")
+                                    print(f"   Torch shape: {speech_conditioning_latent.shape}")
                                 else:
                                     codes, speech_conditioning_latent = result
                                     print(f">> [Cache] GPT conditioning computed (no MLX return)")
