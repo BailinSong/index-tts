@@ -219,6 +219,8 @@ class UnifiedVoiceMLX(nn.Module):
         # Pure MLX conditioning (Conformer + Perceiver)
         if use_mlx_conditioning:
             from indextts.gpt.mlx_conditioning import MLXConditioningModule
+            
+            # Speaker conditioning (32 latents)
             self.conditioning_module = MLXConditioningModule(
                 input_dim=1024,         # Speaker embedding dimension
                 conformer_dim=512,      # Conformer output (matches PyTorch)
@@ -227,15 +229,31 @@ class UnifiedVoiceMLX(nn.Module):
                 conformer_layers=6,     # 6 layers (matches PyTorch)
                 perceiver_depth=2       # 2 layers (matches PyTorch)
             )
+            
+            # Emotion conditioning (1 latent for emotion vector)
+            self.emo_conditioning_module = MLXConditioningModule(
+                input_dim=1024,         # Emotion embedding dimension
+                conformer_dim=512,      # Conformer output (matches PyTorch)
+                model_dim=1024,         # Keep 1024 for emovec_layer input
+                num_latents=1,          # Output 1 latent for emotion
+                conformer_layers=6,     # 6 layers (matches PyTorch)
+                perceiver_depth=2       # 2 layers (matches PyTorch)
+            )
+            
+            # Emotion projection layers (matches PyTorch)
+            self.emovec_layer = nn.Linear(1024, model_dim)  # 1024 → 1280
+            self.emo_layer = nn.Linear(model_dim, model_dim)  # 1280 → 1280
+            
             print(">> MLX: Using pure MLX conditioning (Conformer 512D + Perceiver 1280D)")
+            print(">> MLX: Emotion conditioning with dedicated Conformer + Perceiver")
         else:
             self.conditioning_module = None
+            self.emo_conditioning_module = None
+            self.emovec_layer = None
+            self.emo_layer = None
         
         # Speed embeddings (for duration control)
         self.speed_emb = MLXEmbedding(2, model_dim)
-        
-        # Emotion layer (for emotion vector processing)
-        self.emo_layer = nn.Linear(model_dim, model_dim)
         
         # Core embeddings
         self.text_embedding = MLXEmbedding(number_text_tokens + 1, model_dim)
@@ -260,13 +278,16 @@ class UnifiedVoiceMLX(nn.Module):
         # Conditioning parameters
         self.cond_num = kwargs.get('condition_num_latent', 32)
         
-        # Speed/duration embeddings
-        self.speed_emb = MLXEmbedding(2, model_dim)
+        # Speed/duration embeddings (duplicate, already defined above at Line 256)
+        # self.speed_emb = MLXEmbedding(2, model_dim)
         
-        # Emotion and speaker conditioning layers
-        # Simplified: use linear projections instead of full ConformerEncoder
-        self.emo_layer = MLXLinear(model_dim, model_dim)
-        self.emovec_layer = MLXLinear(1024, model_dim)
+        # Emotion and speaker conditioning layers (for non-MLX-conditioning mode)
+        # Only create if not using pure MLX conditioning
+        if not use_mlx_conditioning:
+            self.emo_layer = MLXLinear(model_dim, model_dim)
+            self.emovec_layer = MLXLinear(1024, model_dim)
+        
+        # Conditioning projection (always needed for compatibility)
         self.cond_projection = MLXLinear(1024, model_dim)  # Project semantic features
         
         # Output heads
@@ -446,7 +467,14 @@ class UnifiedVoiceMLX(nn.Module):
             print("\n>> Loading MLX Conditioning weights...")
             cond_loaded = self._load_conditioning_weights(mlx_weights)
             loaded += cond_loaded
-            print(f">> Loaded {cond_loaded} conditioning weights")
+            print(f">> Loaded {cond_loaded} speaker conditioning weights")
+            
+            # Load emotion conditioning weights
+            if self.emo_conditioning_module is not None:
+                print(">> Loading MLX Emotion Conditioning weights...")
+                emo_loaded = self._load_emo_conditioning_weights(mlx_weights)
+                loaded += emo_loaded
+                print(f">> Loaded {emo_loaded} emotion conditioning weights")
         
         print(f">> Loaded {loaded} weight tensors total from MLX cache")
         
@@ -714,6 +742,220 @@ class UnifiedVoiceMLX(nn.Module):
             loaded += 1
         if 'conditioning_encoder.after_norm.bias' in weights:
             conformer.after_norm.bias = weights['conditioning_encoder.after_norm.bias']
+            loaded += 1
+        
+        return loaded
+    
+    def _load_emo_conditioning_weights(self, weights):
+        """Load Emotion Conditioning (Conformer + Perceiver) weights from PyTorch checkpoint"""
+        loaded = 0
+        
+        # Load emotion Perceiver weights
+        loaded += self._load_emo_perceiver_weights(weights)
+        
+        # Load emotion Conformer weights
+        loaded += self._load_emo_conformer_weights(weights)
+        
+        return loaded
+    
+    def _load_emo_perceiver_weights(self, weights):
+        """Load Emotion Perceiver Resampler weights"""
+        loaded = 0
+        perceiver = self.emo_conditioning_module.perceiver
+        
+        # Latents
+        if 'emo_perceiver_encoder.latents' in weights:
+            perceiver.latents = weights['emo_perceiver_encoder.latents']
+            loaded += 1
+        
+        # proj_context (512 → 1024, note: different from speaker conditioning)
+        if 'emo_perceiver_encoder.proj_context.weight' in weights:
+            perceiver.proj_context.weight = weights['emo_perceiver_encoder.proj_context.weight']
+            loaded += 1
+        if 'emo_perceiver_encoder.proj_context.bias' in weights:
+            perceiver.proj_context.bias = weights['emo_perceiver_encoder.proj_context.bias']
+            loaded += 1
+        
+        # Perceiver layers (2 layers)
+        for layer_idx in range(2):
+            layer = perceiver.layers[layer_idx]
+            attn, ff = layer
+            
+            prefix = f"emo_perceiver_encoder.layers.{layer_idx}"
+            
+            # Attention
+            if f"{prefix}.0.to_q.weight" in weights:
+                attn.to_q.weight = weights[f"{prefix}.0.to_q.weight"]
+                loaded += 1
+            if f"{prefix}.0.to_kv.weight" in weights:
+                attn.to_kv.weight = weights[f"{prefix}.0.to_kv.weight"]
+                loaded += 1
+            if f"{prefix}.0.to_out.weight" in weights:
+                attn.to_out.weight = weights[f"{prefix}.0.to_out.weight"]
+                loaded += 1
+            
+            # Feed-forward
+            if f"{prefix}.1.0.weight" in weights:
+                ff.net[0].weight = weights[f"{prefix}.1.0.weight"]
+                loaded += 1
+            if f"{prefix}.1.0.bias" in weights:
+                ff.net[0].bias = weights[f"{prefix}.1.0.bias"]
+                loaded += 1
+            if f"{prefix}.1.2.weight" in weights:
+                ff.net[2].weight = weights[f"{prefix}.1.2.weight"]
+                loaded += 1
+            if f"{prefix}.1.2.bias" in weights:
+                ff.net[2].bias = weights[f"{prefix}.1.2.bias"]
+                loaded += 1
+        
+        # Final norm
+        if 'emo_perceiver_encoder.norm.gamma' in weights:
+            perceiver.norm.scale = weights['emo_perceiver_encoder.norm.gamma']
+            loaded += 1
+        
+        return loaded
+    
+    def _load_emo_conformer_weights(self, weights):
+        """Load Emotion Conformer Encoder weights"""
+        loaded = 0
+        conformer = self.emo_conditioning_module.conformer
+        
+        # Conv2d Subsampling
+        if 'emo_conditioning_encoder.embed.conv.0.weight' in weights:
+            conformer.subsampling.conv.weight = weights['emo_conditioning_encoder.embed.conv.0.weight']
+            loaded += 1
+        if 'emo_conditioning_encoder.embed.conv.0.bias' in weights:
+            conformer.subsampling.conv.bias = weights['emo_conditioning_encoder.embed.conv.0.bias']
+            loaded += 1
+        
+        # Linear projection
+        if 'emo_conditioning_encoder.embed.out.0.weight' in weights:
+            conformer.subsampling.out.weight = weights['emo_conditioning_encoder.embed.out.0.weight']
+            loaded += 1
+        if 'emo_conditioning_encoder.embed.out.0.bias' in weights:
+            conformer.subsampling.out.bias = weights['emo_conditioning_encoder.embed.out.0.bias']
+            loaded += 1
+        
+        # Position encoding
+        if 'emo_conditioning_encoder.embed.pos_enc.pe' in weights:
+            pe = weights['emo_conditioning_encoder.embed.pos_enc.pe']
+            conformer.pos_encoding = pe.squeeze(0)[:1000]
+            loaded += 1
+        
+        # Conformer blocks (6 layers)
+        for layer_idx in range(6):
+            block = conformer.blocks[layer_idx]
+            prefix = f"emo_conditioning_encoder.encoders.{layer_idx}"
+            
+            # Self-attention
+            if f"{prefix}.self_attn.linear_q.weight" in weights:
+                block.attn.q_proj.weight = weights[f"{prefix}.self_attn.linear_q.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_q.bias" in weights:
+                block.attn.q_proj.bias = weights[f"{prefix}.self_attn.linear_q.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_k.weight" in weights:
+                block.attn.k_proj.weight = weights[f"{prefix}.self_attn.linear_k.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_k.bias" in weights:
+                block.attn.k_proj.bias = weights[f"{prefix}.self_attn.linear_k.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_v.weight" in weights:
+                block.attn.v_proj.weight = weights[f"{prefix}.self_attn.linear_v.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_v.bias" in weights:
+                block.attn.v_proj.bias = weights[f"{prefix}.self_attn.linear_v.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_out.weight" in weights:
+                block.attn.out_proj.weight = weights[f"{prefix}.self_attn.linear_out.weight"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_out.bias" in weights:
+                block.attn.out_proj.bias = weights[f"{prefix}.self_attn.linear_out.bias"]
+                loaded += 1
+            if f"{prefix}.self_attn.linear_pos.weight" in weights:
+                block.attn.pos_proj.weight = weights[f"{prefix}.self_attn.linear_pos.weight"]
+                loaded += 1
+            
+            # Positional biases
+            if f"{prefix}.self_attn.pos_bias_u" in weights:
+                block.attn.pos_bias_u = weights[f"{prefix}.self_attn.pos_bias_u"]
+                loaded += 1
+            if f"{prefix}.self_attn.pos_bias_v" in weights:
+                block.attn.pos_bias_v = weights[f"{prefix}.self_attn.pos_bias_v"]
+                loaded += 1
+            
+            # Feed-forward
+            if f"{prefix}.feed_forward.w_1.weight" in weights:
+                block.ff.layers[0].weight = weights[f"{prefix}.feed_forward.w_1.weight"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_1.bias" in weights:
+                block.ff.layers[0].bias = weights[f"{prefix}.feed_forward.w_1.bias"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_2.weight" in weights:
+                block.ff.layers[2].weight = weights[f"{prefix}.feed_forward.w_2.weight"]
+                loaded += 1
+            if f"{prefix}.feed_forward.w_2.bias" in weights:
+                block.ff.layers[2].bias = weights[f"{prefix}.feed_forward.w_2.bias"]
+                loaded += 1
+            
+            # Convolution module
+            if f"{prefix}.conv_module.pointwise_conv1.weight" in weights:
+                block.conv.pointwise1.weight = weights[f"{prefix}.conv_module.pointwise_conv1.weight"]
+                loaded += 1
+            if f"{prefix}.conv_module.pointwise_conv1.bias" in weights:
+                block.conv.pointwise1.bias = weights[f"{prefix}.conv_module.pointwise_conv1.bias"]
+                loaded += 1
+            if f"{prefix}.conv_module.depthwise_conv.weight" in weights:
+                block.conv.depthwise.weight = weights[f"{prefix}.conv_module.depthwise_conv.weight"]
+                loaded += 1
+            if f"{prefix}.conv_module.depthwise_conv.bias" in weights:
+                block.conv.depthwise.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
+                loaded += 1
+            if f"{prefix}.conv_module.pointwise_conv2.weight" in weights:
+                block.conv.pointwise2.weight = weights[f"{prefix}.conv_module.pointwise_conv2.weight"]
+                loaded += 1
+            if f"{prefix}.conv_module.pointwise_conv2.bias" in weights:
+                block.conv.pointwise2.bias = weights[f"{prefix}.conv_module.pointwise_conv2.bias"]
+                loaded += 1
+            if f"{prefix}.conv_module.norm.weight" in weights:
+                block.conv.bn.weight = weights[f"{prefix}.conv_module.norm.weight"]
+                loaded += 1
+            if f"{prefix}.conv_module.norm.bias" in weights:
+                block.conv.bn.bias = weights[f"{prefix}.conv_module.norm.bias"]
+                loaded += 1
+            
+            # Layer norms
+            if f"{prefix}.norm_mha.weight" in weights:
+                block.norm_attn.weight = weights[f"{prefix}.norm_mha.weight"]
+                loaded += 1
+            if f"{prefix}.norm_mha.bias" in weights:
+                block.norm_attn.bias = weights[f"{prefix}.norm_mha.bias"]
+                loaded += 1
+            if f"{prefix}.norm_conv.weight" in weights:
+                block.norm_conv.weight = weights[f"{prefix}.norm_conv.weight"]
+                loaded += 1
+            if f"{prefix}.norm_conv.bias" in weights:
+                block.norm_conv.bias = weights[f"{prefix}.norm_conv.bias"]
+                loaded += 1
+            if f"{prefix}.norm_ff.weight" in weights:
+                block.norm_ff.weight = weights[f"{prefix}.norm_ff.weight"]
+                loaded += 1
+            if f"{prefix}.norm_ff.bias" in weights:
+                block.norm_ff.bias = weights[f"{prefix}.norm_ff.bias"]
+                loaded += 1
+            if f"{prefix}.norm_final.weight" in weights:
+                block.norm_final.weight = weights[f"{prefix}.norm_final.weight"]
+                loaded += 1
+            if f"{prefix}.norm_final.bias" in weights:
+                block.norm_final.bias = weights[f"{prefix}.norm_final.bias"]
+                loaded += 1
+        
+        # Final norm
+        if 'emo_conditioning_encoder.after_norm.weight' in weights:
+            conformer.after_norm.weight = weights['emo_conditioning_encoder.after_norm.weight']
+            loaded += 1
+        if 'emo_conditioning_encoder.after_norm.bias' in weights:
+            conformer.after_norm.bias = weights['emo_conditioning_encoder.after_norm.bias']
             loaded += 1
         
         return loaded
@@ -1627,17 +1869,20 @@ class UnifiedVoiceMLX(nn.Module):
     
     def get_emo_conditioning(self, speech_conditioning_input, cond_mel_lengths=None):
         """
-        Get emotion conditioning vector from semantic features.
+        Get emotion conditioning vector from semantic features using MLX Conformer + Perceiver.
         
-        Matches model_v2.py logic - returns raw 1024-dim features, not projected.
+        Matches model_v2.py: uses Conformer + Perceiver to extract emotion features.
         
         Args:
             speech_conditioning_input: Semantic features (b, time, 1024) PyTorch tensor
             cond_mel_lengths: Lengths tensor
             
         Returns:
-            Emotion vector (b, 1024) PyTorch tensor (raw features, NOT projected)
+            Emotion vector (b, 1024) PyTorch tensor (before emovec_layer projection)
         """
+        if not self.use_mlx_conditioning or self.emo_conditioning_module is None:
+            raise RuntimeError("MLX emotion conditioning not enabled")
+        
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         
         # Ensure correct shape (b, time, 1024)
@@ -1648,36 +1893,48 @@ class UnifiedVoiceMLX(nn.Module):
         # Convert to MLX
         speech_mlx = torch_to_mlx(speech_conditioning_input)  # (b, time, 1024)
         
-        # Simplified: just average over time (no projection yet)
-        # The projection will be done by emovec_layer and emo_layer in get_emovec
-        emo_cond = mx.mean(speech_mlx, axis=1)  # (b, 1024)
+        # Use dedicated emotion conditioning module (Conformer + Perceiver)
+        # Output: (b, 1, 1024) - 1 latent with 1024 dimensions
+        emo_latent = self.emo_conditioning_module(speech_mlx, None)
+        
+        # Squeeze to (b, 1024)
+        emo_cond = mx.squeeze(emo_latent, axis=1)  # (b, 1024)
         
         # Return as PyTorch
         return mlx_to_torch(emo_cond, device='mps')
     
     def get_emovec(self, emo_speech_conditioning_latent, emo_cond_lengths):
         """
-        Get emotion vector (matches model_v2.py).
+        Get emotion vector using MLX Conformer + Perceiver (matches model_v2.py).
+        
+        Pipeline:
+        1. get_emo_conditioning: Conformer + Perceiver → (b, 1024)
+        2. emovec_layer: 1024 → model_dim (1280)
+        3. emo_layer: model_dim → model_dim
         
         Args:
-            emo_speech_conditioning_latent: Semantic features (b, 1024, time)
-            emo_cond_lengths: Lengths
+            emo_speech_conditioning_latent: Semantic features (b, 1024, time) PyTorch tensor
+            emo_cond_lengths: Lengths tensor
             
         Returns:
-            Emotion vector (PyTorch tensor) (b, model_dim)
+            Emotion vector (b, model_dim) PyTorch tensor
         """
-        # Get emotion conditioning (function handles transpose internally)
+        if not self.use_mlx_conditioning:
+            raise RuntimeError("MLX conditioning not enabled")
+        
+        # Get emotion conditioning using Conformer + Perceiver
+        # Returns (b, 1024) PyTorch tensor
         emo_vec_syn_ori = self.get_emo_conditioning(
-            emo_speech_conditioning_latent,  # No transpose, function handles it
+            emo_speech_conditioning_latent,
             emo_cond_lengths
         )
         
-        # Apply emotion layers (convert to MLX, apply, convert back)
+        # Apply emotion projection layers in MLX
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         
-        emo_mlx = torch_to_mlx(emo_vec_syn_ori)
-        emo_vec_syn = self.emovec_layer(emo_mlx)
-        emo_vec = self.emo_layer(emo_vec_syn)
+        emo_mlx = torch_to_mlx(emo_vec_syn_ori)  # (b, 1024)
+        emo_vec_syn = self.emovec_layer(emo_mlx)  # (b, 1024) → (b, 1280)
+        emo_vec = self.emo_layer(emo_vec_syn)  # (b, 1280) → (b, 1280)
         
         return mlx_to_torch(emo_vec, device='mps')
     
