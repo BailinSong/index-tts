@@ -115,20 +115,7 @@ class IndexTTS2:
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
         self.gpt_is_mlx = False
         
-        # Load PyTorch model first (for conditioning modules)
-        self.gpt = UnifiedVoice(**self.cfg.gpt)
-        load_checkpoint(self.gpt, self.gpt_path)
-        self.gpt = self.gpt.to(self.device)
-        
-        if self.use_fp16:
-            self.gpt.eval().half()
-        else:
-            self.gpt.eval()
-        
-        print(">> GPT weights restored from:", self.gpt_path)
-        
-        # If MLX enabled, create hybrid model
-        # ✅ TESTING: Pure MLX Conditioning with Conv2d + xscale fixes (correlation improved 0.05 → 0.53)
+        # 🎯 核心优化：MLX 模式下只加载 MLX 模型，不加载 PyTorch
         if self.use_mlx and self.mlx_available:
             print("\n>> [Model 1/4] Creating Pure MLX GPT (MLX Cond + MLX Transformer)...")
             try:
@@ -136,23 +123,44 @@ class IndexTTS2:
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
                 # Create MLX model with PURE MLX mode
                 self.mlx_transformer = UnifiedVoiceMLX(
-                    use_mlx_conditioning=True,  # ✅ TESTING: Pure MLX with Conv2d + xscale
+                    use_mlx_conditioning=True,
                     **self.cfg.gpt
                 )
                 # Load weights
                 self.mlx_transformer.load_weights_from_dict(mlx_gpt_weights)
                 self.gpt_is_mlx = True
-                print(">> ✓ Pure MLX: MLX Conditioning + MLX Transformer")
-                print("   (Conv2d subsampling + xscale fixes applied)")
+                self.gpt = None  # 🎯 不加载 PyTorch 模型！节省 ~2.5GB
+                print(">> ✓ Pure MLX GPT loaded successfully")
+                print(">> ✓ PyTorch GPT skipped (saved ~2.5GB memory)")
+                print("   (MLX: Conformer + Perceiver + Emotion Conditioning)")
             except Exception as e:
                 print(f">> MLX loading failed: {e}")
                 import traceback
                 traceback.print_exc()
-                print(">> Using full PyTorch GPT...")
+                print(">> Falling back to PyTorch GPT...")
+                # 降级：加载 PyTorch 模型
+                self.gpt = UnifiedVoice(**self.cfg.gpt)
+                load_checkpoint(self.gpt, self.gpt_path)
+                self.gpt = self.gpt.to(self.device)
+                if self.use_fp16:
+                    self.gpt.eval().half()
+                else:
+                    self.gpt.eval()
+                print(">> GPT weights restored from:", self.gpt_path)
                 self.gpt_is_mlx = False
                 self.mlx_transformer = None
         else:
-            print(">> GPT: Running on PyTorch")
+            # 非 MLX 模式：加载 PyTorch 模型
+            print(">> Loading PyTorch GPT...")
+            self.gpt = UnifiedVoice(**self.cfg.gpt)
+            load_checkpoint(self.gpt, self.gpt_path)
+            self.gpt = self.gpt.to(self.device)
+            if self.use_fp16:
+                self.gpt.eval().half()
+            else:
+                self.gpt.eval()
+            print(">> GPT weights restored from:", self.gpt_path)
+            self.gpt_is_mlx = False
             self.mlx_transformer = None
 
         # Post-init only for PyTorch models
