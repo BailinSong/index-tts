@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--num-beams", type=int, default=1, help="Number of beams for beam search (default: 1=greedy, use 15 for best quality)")
     parser.add_argument("--deterministic", action="store_true", default=False, help="Use deterministic generation (argmax) instead of sampling for MLX")
     parser.add_argument("--debug", action="store_true", default=False, help="Enable debug output for MLX generation")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible generation (e.g., 42)")
     args = parser.parse_args()
     if len(args.text.strip()) == 0:
         print("ERROR: Text is empty.")
@@ -78,6 +79,8 @@ def main():
         generation_kwargs['use_sampling'] = False
     if args.debug:
         generation_kwargs['debug_generation'] = True
+    if args.seed is not None:
+        generation_kwargs['seed'] = args.seed
     
     tts.infer(
         spk_audio_prompt=args.voice,

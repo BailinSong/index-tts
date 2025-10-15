@@ -594,6 +594,17 @@ class IndexTTS2:
               emo_vector=None,
               use_emo_text=False, emo_text=None, use_random=False, interval_silence=200,
               verbose=False, max_text_tokens_per_segment=120, stream_return=False, quick_streaming_tokens=0, **generation_kwargs):
+        
+        # Set random seed if provided
+        seed = generation_kwargs.pop('seed', None)
+        if seed is not None:
+            print(f">> Setting random seed: {seed}")
+            torch.manual_seed(seed)
+            random.seed(seed)
+            if self.use_mlx:
+                import mlx.core as mx
+                mx.random.seed(seed)
+        
         print(">> starting inference...")
         self._set_gr_progress(0, "starting inference...")
         if verbose:
