@@ -1715,7 +1715,7 @@ class UnifiedVoiceMLX(nn.Module):
         emo_cond_lengths=None,
         emo_vec=None,
         use_speed=False,
-        **kwargs
+        return_conditioning_mlx=False, **kwargs
     ):
         """
         Main inference method with pure MLX conditioning.
@@ -1873,7 +1873,11 @@ class UnifiedVoiceMLX(nn.Module):
         try:
             # 删除大的中间 MLX 数组
             del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
-            del speech_conditioning_latent_mlx, emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
+            # 清理MLX中间结果（保留speech_conditioning_latent_mlx如果需要缓存）
+            del speech_condition_mlx, emo_speech_condition_mlx, cond_lengths_mlx
+            if not return_conditioning_mlx:
+                del speech_conditioning_latent_mlx
+            del emo_vec_mlx, conds_mlx, text_mlx, codes_mlx
             if all_beams_mlx is not None:
                 del all_beams_mlx
             # 清理 MLX 缓存和Metal资源
@@ -1886,9 +1890,15 @@ class UnifiedVoiceMLX(nn.Module):
             pass
         
         if all_beams_torch is not None:
-            return codes, speech_conditioning_latent_torch, all_beams_torch
+            if return_conditioning_mlx:
+                return codes, speech_conditioning_latent_torch, all_beams_torch, speech_conditioning_latent_mlx
+            else:
+                return codes, speech_conditioning_latent_torch, all_beams_torch
         else:
-            return codes, speech_conditioning_latent_torch
+            if return_conditioning_mlx:
+                return codes, speech_conditioning_latent_torch, speech_conditioning_latent_mlx
+            else:
+                return codes, speech_conditioning_latent_torch
 
 
 def create_mlx_gpt_from_cache(mlx_cache_dict, config):

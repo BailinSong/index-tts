@@ -11,11 +11,11 @@
 
 | 指标 | 平均值 | 标准差 | 最小值 | 最大值 |
 |------|--------|--------|--------|--------|
-| total_time | 17.29s | 2.07s | 15.63s | 19.61s |
-| gpt_gen_time | 9.42s | 0.95s | 8.46s | 10.36s |
-| gpt_forward_time | 0.06s | 0.01s | 0.05s | 0.07s |
-| s2mel_time | 5.95s | 1.12s | 5.25s | 7.24s |
-| bigvgan_time | 0.63s | 0.01s | 0.62s | 0.63s |
+| total_time | 20.61s | 2.05s | 18.38s | 22.41s |
+| gpt_gen_time | 8.56s | 1.69s | 6.92s | 10.30s |
+| gpt_forward_time | 0.10s | 0.02s | 0.08s | 0.11s |
+| s2mel_time | 10.06s | 0.52s | 9.56s | 10.59s |
+| bigvgan_time | 0.62s | 0.02s | 0.60s | 0.63s |
 | rtf | 3.00s | 0.00s | 3.00s | 3.00s |
 
 ## S2MEL分解
@@ -25,5 +25,5 @@
 | s2mel_gpt_layer | 0.00s | 0.00s |
 | s2mel_vq2emb | 0.01s | 0.00s |
 | s2mel_prepare | 0.00s | 0.00s |
-| s2mel_length_reg | 3.68s | 1.18s |
-| s2mel_cfm | 2.26s | 0.06s |
+| s2mel_length_reg | 7.56s | 0.67s |
+| s2mel_cfm | 2.48s | 0.16s |
