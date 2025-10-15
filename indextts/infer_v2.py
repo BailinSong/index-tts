@@ -996,7 +996,9 @@ class IndexTTS2:
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
-                    diffusion_steps = self.diffusion_steps  # Configurable via --diffusion-steps (default: 20)
+                    # 🚀 V3优化: 减少diffusion steps（20→15，预期-0.5s，-25%）
+                    diffusion_steps = 15  # 从20降低到15，需验证音质
+                    # diffusion_steps = self.diffusion_steps  # 原始值：20
                     inference_cfg_rate = 0.7
                     
                     # Profiling: gpt_layer
