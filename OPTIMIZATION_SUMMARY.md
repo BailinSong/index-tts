@@ -101,7 +101,27 @@
 
 ## 📊 性能基线（Seed=42）
 
-### 当前状态（Pure MLX GPT + PyTorch其他）
+### ⭐ V1基准（当前稳定基准）
+
+**测试方法**: 4次运行，忽略第1次预热，后3次平均  
+**测试文本**: "到底应该吃什么", "你为什么不愿意", "今天天气真不错"
+
+```
+V1基准值: 7.35s (RTF=2.91)
+  ├─ 平均值: 7.35s
+  ├─ 中位数: 7.66s
+  ├─ 标准差: ±0.80s
+  └─ 变异系数: 10.9%
+
+详细数据:
+  Run 1: 7.66s (到底应该吃什么)
+  Run 2: 6.45s (你为什么不愿意)
+  Run 3: 7.96s (今天天气真不错)
+```
+
+**⚠️ 所有后续优化都应该与V1基准(7.35s)对比！**
+
+### V0基准（历史参考）
 
 ```
 Total: 16.62s (中位数, RTF=6.57)
@@ -118,14 +138,16 @@ Total: 16.62s (中位数, RTF=6.57)
 └─ 其他: ~1.3s (7.8%)
 ```
 
-### 性能瓶颈
+**V1 vs V0提升: 9.27s (55.7% faster) - Conditioning缓存效果**
+
+### V1基准性能瓶颈（7.35s）
 
 | 瓶颈 | 时间 | 占比 | 优化难度 | 已验证方案 |
 |------|------|------|---------|-----------|
-| GPT生成 | 9.44s | 56.8% | 中 | ✅ Conditioning缓存 |
-| S2MEL length_reg | 3.0s | 18.0% | 高 | ❌ MLX实现失败 |
-| S2MEL cfm | 2.2s | 13.2% | 高 | - |
-| BigVGAN | 0.63s | 3.8% | 中 | - |
+| GPT生成 | ~3.5s | 47.6% | 中 | ✅ Conditioning缓存 |
+| S2MEL | ~2.5s | 34.0% | 高 | ❌ MLX实现失败 |
+| BigVGAN | ~0.6s | 8.2% | 中 | - |
+| 其他 | ~0.75s | 10.2% | - | - |
 
 ---
 
@@ -176,6 +198,8 @@ Total: 16.62s (中位数, RTF=6.57)
 ### 缓存优化
 9. `CONDITIONING_CACHE_ANALYSIS.md` - 缓存可行性
 10. `CONDITIONING_CACHE_RESULTS.md` - 验证结果
+11. `CONDITIONING_CACHE_FINAL_RESULTS.md` - 公平对比测试
+12. `BASELINE_V1_OPTIMIZED.md` - V1基准（4次运行，忽略预热）
 
 ### S2MEL尝试
 11. `S2MEL_MLX_INTEGRATION_STATUS.md` - 集成状态
@@ -185,6 +209,7 @@ Total: 16.62s (中位数, RTF=6.57)
 13. `INITIALIZATION_ORDER_EXPLANATION.md` - 初始化顺序
 14. `OPTIMIZATION_PLAN.md` - P0/P1/P2计划
 15. `benchmark_baseline.py` - 自动化测试工具
+16. `benchmark_v1_baseline.py` - V1基准测试工具（4次运行）
 
 ---
 
@@ -237,8 +262,8 @@ Total: 16.62s (中位数, RTF=6.57)
 - ❌ S2MEL MLX（Conv1d转换问题）
 
 **当前性能:**
-- Baseline: 16.62s (RTF=6.57)
-- 优化后（带缓存，批量场景）: ~14s (RTF=5.5)
+- V0 Baseline (无缓存): 16.62s (RTF=6.57)
+- **V1 Baseline (带缓存): 7.35s (RTF=2.91)** ⭐
 
 **建议:**
 1. 将Conditioning缓存合并到full_mlx
