@@ -286,6 +286,9 @@ class UnifiedVoiceMLX(nn.Module):
         print(f">> Initialized UnifiedVoiceMLX (full transformer, layers={layers}, dim={model_dim}, heads={heads})")
         print(f"   Conditioning: {self.cond_num} latents, Positional: mel={max_mel_tokens}, text={max_text_tokens}")
         print(f"   Causal mask: {max_positions}x{max_positions} (GPT2 style)")
+        
+        # 🔥 P0优化: JIT预热标志（延迟到load_weights之后）
+        self._jit_warmed_up = False
     
     def load_weights_from_dict(self, mlx_weights):
         """
@@ -445,7 +448,38 @@ class UnifiedVoiceMLX(nn.Module):
             print(f">> Loaded {cond_loaded} conditioning weights")
         
         print(f">> Loaded {loaded} weight tensors total from MLX cache")
+        
+        # 🔥 P0优化: 加载权重后立即JIT预热
+        if not self._jit_warmed_up:
+            self._warmup_jit()
+            self._jit_warmed_up = True
+        
         return loaded
+    
+    def _warmup_jit(self):
+        """JIT预热：预先编译Metal kernels，避免首次推理时的编译开销"""
+        print(">> 🔥 JIT Warmup: Pre-compiling Metal kernels...")
+        import time
+        t0 = time.time()
+        
+        # 创建dummy输入
+        dummy_seq = mx.zeros((1, 10, self.model_dim))
+        
+        # 预热transformer blocks
+        for block in self.transformer_blocks:
+            dummy_seq, _ = block(dummy_seq, causal_mask=self.causal_mask, use_cache=True)
+        
+        # 预热LayerNorm
+        dummy_seq = self.gpt_ln_f(dummy_seq)
+        dummy_seq = self.final_norm(dummy_seq)
+        
+        # 预热mel_head
+        dummy_logits = self.mel_head(dummy_seq)
+        
+        # 强制执行，触发编译
+        mx.eval(dummy_logits)
+        
+        print(f">> JIT Warmup completed in {time.time()-t0:.2f}s")
     
     def _load_conditioning_weights(self, weights):
         """Load Conformer and Perceiver weights from PyTorch checkpoint"""
@@ -876,6 +910,9 @@ class UnifiedVoiceMLX(nn.Module):
             batch_hidden = self.final_norm(batch_hidden)  # (num_active, 1, D)
             batch_logits = self.mel_head(batch_hidden[:, 0, :])  # (num_active, vocab)
             
+            # 🔥 P0优化: 强制计算logits
+            mx.eval(batch_logits)
+            
             # Batch log_softmax
             batch_max_logits = mx.max(batch_logits, axis=-1, keepdims=True)
             batch_exp_logits = mx.exp(batch_logits - batch_max_logits)
@@ -1294,6 +1331,9 @@ class UnifiedVoiceMLX(nn.Module):
         next_token_logits = self.mel_head(hidden[:, -1:, :])  # (B, 1, vocab)
         next_token_logits = next_token_logits[:, 0, :]  # (B, vocab) - 去掉seq维度
         
+        # 🔥 P0优化: 强制计算，避免lazy evaluation堆积
+        mx.eval(next_token_logits)
+        
         # 2. 构建input_ids用于logits_processor (目前只有fake_inputs + start_mel_token)
         # PyTorch在第一步时input_ids包含所有fake_inputs(conditioning) + start_mel_token
         current_input_ids = mx.full((batch_size, context_len + 1), 1, dtype=mx.int32)  # fake inputs
@@ -1315,6 +1355,8 @@ class UnifiedVoiceMLX(nn.Module):
             # Greedy (argmax)
             next_token_id = mx.argmax(next_token_scores[0])
             next_token = mx.array([[next_token_id]])
+            # 🔥 P0优化: 强制计算token
+            mx.eval(next_token)
         
         token_val = int(next_token[0, 0])
         print(f">> [MLX] First token: {token_val}")
@@ -1381,6 +1423,9 @@ class UnifiedVoiceMLX(nn.Module):
             next_token_logits = self.mel_head(hidden)  # (B, 1, vocab)
             next_token_logits = next_token_logits[:, 0, :]  # (B, vocab)
             
+            # 🔥 P0优化: 强制计算logits
+            mx.eval(next_token_logits)
+            
             # 2. 构建当前的input_ids (用于logits_processor)
             # PyTorch: input_ids = [fake_inputs... + start_mel + generated_tokens...]
             # 我们需要维护完整的input_ids序列
@@ -1423,6 +1468,8 @@ class UnifiedVoiceMLX(nn.Module):
                 # Greedy (argmax)
                 next_token_id = mx.argmax(next_token_scores[0])
                 next_token = mx.array([[next_token_id]])
+                # 🔥 P0优化: 强制计算
+                mx.eval(next_token)
             
             # Check stop token
             token_val = int(next_token[0, 0])
@@ -1701,16 +1748,29 @@ class UnifiedVoiceMLX(nn.Module):
         if emo_cond_lengths is None:
             emo_cond_lengths = torch.tensor([emo_speech_condition.shape[-1]], device=speech_condition.device)
         
+        # 🔥 P0优化: 批量转换，减少.cpu()调用
         # Convert to MLX for pure MLX conditioning
-        speech_condition_mlx = torch_to_mlx(speech_condition.cpu())
+        with torch.no_grad():
+            # 一次性转到CPU（如果还在GPU/MPS上）
+            if speech_condition.device.type != 'cpu':
+                speech_condition_cpu = speech_condition.cpu()
+                emo_speech_condition_cpu = emo_speech_condition.cpu()
+                cond_lengths_cpu = cond_lengths.cpu() if cond_lengths is not None else None
+            else:
+                speech_condition_cpu = speech_condition
+                emo_speech_condition_cpu = emo_speech_condition
+                cond_lengths_cpu = cond_lengths
+        
+        # 批量转换为MLX
+        speech_condition_mlx = torch_to_mlx(speech_condition_cpu)
         if speech_condition_mlx.ndim == 3 and speech_condition_mlx.shape[1] == 1024:
             speech_condition_mlx = speech_condition_mlx.transpose(0, 2, 1)  # (b, 1024, t) -> (b, t, 1024)
         
-        emo_speech_condition_mlx = torch_to_mlx(emo_speech_condition.cpu())
+        emo_speech_condition_mlx = torch_to_mlx(emo_speech_condition_cpu)
         if emo_speech_condition_mlx.ndim == 3 and emo_speech_condition_mlx.shape[1] == 1024:
             emo_speech_condition_mlx = emo_speech_condition_mlx.transpose(0, 2, 1)
         
-        cond_lengths_mlx = torch_to_mlx(cond_lengths.cpu()) if cond_lengths is not None else None
+        cond_lengths_mlx = torch_to_mlx(cond_lengths_cpu) if cond_lengths_cpu is not None else None
         
         # Get conditioning latents using PURE MLX (Conformer + Perceiver)
         print('>> [MLX] Running Conformer + Perceiver for speech conditioning...')
@@ -1742,8 +1802,11 @@ class UnifiedVoiceMLX(nn.Module):
         
         print(f">> [MLX] Pure MLX conditioning shape: {conds_mlx.shape}")
         
+        # 🔥 P0优化: 批量转换text
         # Convert text to MLX
-        text_mlx = torch_to_mlx(text_inputs)
+        with torch.no_grad():
+            text_cpu = text_inputs.cpu() if text_inputs.device.type != 'cpu' else text_inputs
+        text_mlx = torch_to_mlx(text_cpu)
         
         # Generate codes using beam search or greedy/sampling
         num_beams = kwargs.get('num_beams', 1)  # 🔧 Changed to 1 for faster debugging (use 15 for production)
@@ -1786,6 +1849,9 @@ class UnifiedVoiceMLX(nn.Module):
             all_beams_mlx = None  # No beams in greedy/sampling mode
         
         print(f">> [MLX] Generation complete")
+        
+        # 🔥 P0优化: 强制计算codes_mlx，然后一次性转换
+        mx.eval(codes_mlx)
         
         # Convert to PyTorch with correct dtype
         codes = mlx_to_torch(codes_mlx, device='cpu').long().to(speech_condition.device)
