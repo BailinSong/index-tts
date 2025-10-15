@@ -884,51 +884,6 @@ class IndexTTS2:
                                 else:
                                     codes, speech_conditioning_latent = result
                                     print(f">> [Cache] GPT conditioning computed (no MLX return)")
-                        else:
-                            # Hybrid mode: PyTorch conditioning + MLX transformer
-                            from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
-                            
-                            # Profiling: Conditioning准备
-                            t0_cond = time.perf_counter()
-                            cond_lengths_t = torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device)
-                            speech_conditioning_latent = self.gpt.get_conditioning(
-                                spk_cond_emb.transpose(1, 2), cond_lengths_t
-                            )
-                            
-                            tmp = torch.zeros(text_tokens.size(0)).to(text_tokens.device)
-                            duration_emb = self.gpt.speed_emb(torch.zeros_like(tmp).long())
-                            duration_emb_half = self.gpt.speed_emb(torch.ones_like(tmp).long())
-                            
-                            conds_latent = torch.cat((
-                                speech_conditioning_latent + emovec.unsqueeze(1),
-                                duration_emb_half.unsqueeze(1),
-                                duration_emb.unsqueeze(1)
-                            ), dim=1)
-                            gpt_conditioning_time += time.perf_counter() - t0_cond
-                            
-                            # Profiling: 转换到MLX
-                            t0_to_mlx = time.perf_counter()
-                            conds_mlx = torch_to_mlx(conds_latent)
-                            text_mlx = torch_to_mlx(text_tokens)
-                            gpt_to_mlx_time += time.perf_counter() - t0_to_mlx
-                            
-                            # Profiling: MLX生成
-                            t0_gen = time.perf_counter()
-                            codes_mlx = self.mlx_transformer.simple_forward(
-                                text_mlx,
-                                conditioning=conds_mlx,
-                                max_length=max_mel_tokens,
-                                temperature=temperature
-                            )
-                            
-                            # Convert to CPU first, then to long (int64), then to target device
-                            # MPS doesn't support uint32, so we need this intermediate step
-                            codes = mlx_to_torch(codes_mlx, device='cpu').long().to(self.device)
-                            # speech_conditioning_latent already computed above
-                            
-                            # Synchronize MPS device to ensure tensor is ready
-                            if 'mps' in str(self.device):
-                                torch.mps.synchronize()
                     else:
                         # PyTorch inference
                         if self.gpt is None:
