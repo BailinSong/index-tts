@@ -758,7 +758,8 @@ class UnifiedVoiceMLX(nn.Module):
         # Add start token
         start_token_ids = mx.full((1, 1), self.start_mel_token, dtype=mx.int32)
         start_token_emb = self.mel_embedding(start_token_ids)
-        start_token_emb = start_token_emb + self.mel_pos_embedding.weight[context_len:context_len+1]
+        # 🔧 FIX: Use relative position 0 for start_mel (matches PyTorch)
+        start_token_emb = start_token_emb + self.mel_pos_embedding.weight[0:1]
         
         # 🔧 CRITICAL FIX: PyTorch-style beam initialization
         # All beams start with the SAME start_token, but with different scores:
@@ -837,14 +838,17 @@ class UnifiedVoiceMLX(nn.Module):
             for beam_idx in active_beam_indices:
                 last_token_id = int(beam_codes[beam_idx][0, -1])
                 batch_token_ids.append(last_token_id)
-                current_pos = context_len + beam_codes[beam_idx].shape[1]
+                # 🔧 FIX: Use relative position (matches PyTorch)
+                # beam_codes includes start_mel, so shape[1]=1 means only start_mel
+                # position should be: step=1→pos=2, step=2→pos=3, ...
+                current_pos = beam_codes[beam_idx].shape[1] + 1  # +1 because start_mel is at pos 0
                 batch_positions.append(current_pos)
             
             # Batch embedding (num_active_beams, 1, model_dim)
             batch_token_ids_mx = mx.array([[tid] for tid in batch_token_ids], dtype=mx.int32)
             batch_token_emb = self.mel_embedding(batch_token_ids_mx)  # (num_active, 1, D)
             
-            # Batch position embedding
+            # Batch position embedding (use relative positions)
             batch_pos_emb = mx.stack([self.mel_pos_embedding.weight[pos:pos+1][0] for pos in batch_positions], axis=0)
             batch_pos_emb = batch_pos_emb.reshape(len(active_beam_indices), 1, self.model_dim)
             batch_hidden = batch_token_emb + batch_pos_emb  # (num_active, 1, D)
@@ -1248,12 +1252,13 @@ class UnifiedVoiceMLX(nn.Module):
         start_token_ids = mx.full((batch_size, 1), self.start_mel_token, dtype=mx.int32)
         start_token_emb = self.mel_embedding(start_token_ids)  # (B, 1, D)
         
-        # CRITICAL: Track absolute position in sequence for position encoding
-        context_len = context.shape[1]  # Length of conditioning + text
+        # CRITICAL: PyTorch uses RELATIVE position (from 0) for mel tokens, NOT absolute!
+        # PyTorch: start_mel uses position 0, first generated mel uses position 2, etc.
+        # See GPT2InferenceModel.forward line 148 and 158
+        context_len = context.shape[1]  # Length of conditioning + text (for reference only)
         
-        # Add mel position encoding for start_mel_token at absolute position context_len
-        # PyTorch uses mel_pos_embedding for mel tokens, returns (1, dim) without batch
-        start_pos = context_len
+        # 🔧 FIX: Use relative position 0 for start_mel_token (matches PyTorch)
+        start_pos = 0  # PyTorch uses position 0 for start_mel_token
         start_token_emb = start_token_emb + self.mel_pos_embedding.weight[start_pos:start_pos+1]  # (B, 1, D) + (1, D)
         
         # Full initial sequence: [context] + [start_mel_token]
@@ -1341,11 +1346,18 @@ class UnifiedVoiceMLX(nn.Module):
             # Embed only the new token
             next_emb = self.mel_embedding(next_token)  # (B, 1, D)
             
-            # CRITICAL: Add mel position encoding using ABSOLUTE position in sequence
-            # Current absolute position = context_len + step (step=0 was start_token, step=1 is first generated, etc.)
-            absolute_pos = context_len + step
-            if absolute_pos < self.mel_pos_embedding.weight.shape[0]:
-                mel_pos_enc = self.mel_pos_embedding.weight[absolute_pos:absolute_pos+1]  # (1, D)
+            # CRITICAL: PyTorch uses RELATIVE position (from 0) for mel tokens!
+            # PyTorch logic (GPT2InferenceModel line 158):
+            #   position = attention_mask.shape[1] - mel_len
+            # Where mel_len = cached_mel_emb.shape[1] (不变)
+            # attention_mask grows: mel_len+1, mel_len+2, mel_len+3, ...
+            # So position grows: 1, 2, 3, ...
+            # But start_mel used position 0, so:
+            #   step=1 (first generated) → position = 1 + 1 = 2
+            #   step=2 → position = 2 + 1 = 3
+            relative_pos = step + 1  # +1 because start_mel used position 0
+            if relative_pos < self.mel_pos_embedding.weight.shape[0]:
+                mel_pos_enc = self.mel_pos_embedding.weight[relative_pos:relative_pos+1]  # (1, D)
                 next_emb = next_emb + mel_pos_enc  # (B, 1, D) + (1, D)
             
             # Apply transformer with KV cache (much faster!)
@@ -1759,9 +1771,9 @@ class UnifiedVoiceMLX(nn.Module):
                 all_beams_mlx = None
         else:
             # Use greedy/sampling (faster but less stable)
-            # 🔧 MATCH PYTORCH: When num_beams=1, PyTorch uses do_sample=True (multinomial)
-            # So we enable sampling by default for num_beams=1 to match PyTorch behavior
-            use_sampling = kwargs.get('use_sampling', True)  # 🔧 Changed: True for num_beams=1
+            # 🔧 UPDATED: Force greedy (argmax) when num_beams=1 for deterministic comparison
+            # This matches the updated PyTorch behavior (do_sample=False for num_beams=1)
+            use_sampling = kwargs.get('use_sampling', False)  # 🔧 Changed to False for deterministic debugging
             print(f">> [MLX] Starting generation with {'sampling (multinomial)' if use_sampling else 'greedy (argmax)'}")
             codes_mlx = self.simple_forward(
                 text_mlx,

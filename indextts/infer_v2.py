@@ -753,6 +753,10 @@ class IndexTTS2:
                             if 'mps' in str(self.device):
                                 torch.mps.synchronize()
                     else:
+                        # 🔧 For debugging: force greedy decoding when num_beams=1 for deterministic output
+                        # PyTorch's do_sample=True is not deterministic even with fixed seed
+                        use_sampling_mode = False if num_beams == 1 else do_sample
+                        
                         codes, speech_conditioning_latent = self.gpt.inference_speech(
                             spk_cond_emb,
                             text_tokens,
@@ -760,7 +764,7 @@ class IndexTTS2:
                             cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
                             emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
                             emo_vec=emovec,
-                            do_sample=True,
+                            do_sample=use_sampling_mode,
                             top_p=top_p,
                             top_k=top_k,
                             temperature=temperature,
