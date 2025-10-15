@@ -1182,20 +1182,18 @@ class UnifiedVoiceMLX(nn.Module):
         import time
         import os
         # 🚀 使用优化版本的logits processors
-        # ⚠️ 暂时禁用优化版本，等待调试完成
-        use_optimized = False
-        # try:
-        #     from indextts.gpt.mlx_logits_processors_optimized import LogitsProcessorList
-        #     use_optimized = True
-        # except ImportError:
-        from indextts.gpt.mlx_logits_processors import (
-            LogitsProcessorList,
-            TemperatureLogitsWarper,
-            RepetitionPenaltyLogitsProcessor,
-            TopPLogitsWarper,
-            TopKLogitsWarper,
-        )
-        #     use_optimized = False
+        try:
+            from indextts.gpt.mlx_logits_processors_optimized import LogitsProcessorList
+            use_optimized = True
+        except ImportError:
+            from indextts.gpt.mlx_logits_processors import (
+                LogitsProcessorList,
+                TemperatureLogitsWarper,
+                RepetitionPenaltyLogitsProcessor,
+                TopPLogitsWarper,
+                TopKLogitsWarper,
+            )
+            use_optimized = False
         
         seed = kwargs.get('seed', None)
         if seed is None:

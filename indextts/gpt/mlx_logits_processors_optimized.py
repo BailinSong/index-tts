@@ -36,9 +36,9 @@ class RepetitionPenaltyLogitsProcessorOptimized(LogitsProcessor):
     优化版本的Repetition Penalty
     
     优化点：
-    1. 纯MLX操作，避免numpy转换
-    2. 向量化处理，避免Python循环
-    3. 使用mx.scatter减少操作
+    1. 使用numpy向量化操作（比原始实现快）
+    2. 避免Python循环遍历所有unique tokens
+    3. 一次性处理所有penalties
     """
     
     def __init__(self, penalty: float):
@@ -52,40 +52,32 @@ class RepetitionPenaltyLogitsProcessorOptimized(LogitsProcessor):
         
         batch_size, vocab_size = logits.shape
         
-        # 🚀 优化：使用纯MLX向量化操作
+        # 🚀 优化：使用numpy进行快速处理
+        import numpy as np
+        logits_np = np.array(logits)
+        input_ids_np = np.array(input_ids)
+        
         for batch_idx in range(batch_size):
-            batch_logits = logits[batch_idx]
-            batch_input_ids = input_ids[batch_idx]
+            batch_logits = logits_np[batch_idx]
+            batch_input_ids = input_ids_np[batch_idx]
             
-            # 获取unique tokens (MLX操作)
-            unique_ids = mx.unique(batch_input_ids)
+            # 获取unique tokens（numpy比MLX快）
+            unique_ids = np.unique(batch_input_ids)
+            unique_ids = unique_ids[(unique_ids >= 0) & (unique_ids < vocab_size)]
             
-            # 过滤掉无效的token id
-            valid_mask = (unique_ids >= 0) & (unique_ids < vocab_size)
-            unique_ids = unique_ids[valid_mask]
-            
-            if unique_ids.size == 0:
+            if len(unique_ids) == 0:
                 continue
             
-            # 获取这些token的scores
+            # 🚀 向量化处理：一次性获取所有scores
             scores = batch_logits[unique_ids]
             
             # 向量化应用penalty
-            # score < 0: score *= penalty
-            # score > 0: score /= penalty
-            penalized_scores = mx.where(scores < 0, scores * self.penalty, scores / self.penalty)
+            penalized_scores = np.where(scores < 0, scores * self.penalty, scores / self.penalty)
             
-            # 更新logits (使用索引赋值)
-            # MLX不支持直接索引赋值，需要重建
-            updated_logits = batch_logits
-            for i, token_id in enumerate(unique_ids.tolist()):
-                # 这里仍需要循环，但只循环unique tokens（通常很少）
-                mask = mx.arange(vocab_size) == token_id
-                updated_logits = mx.where(mask, penalized_scores[i], updated_logits)
-            
-            logits = mx.array([updated_logits if j == batch_idx else logits[j] for j in range(batch_size)])
+            # 向量化更新（比逐个循环快）
+            batch_logits[unique_ids] = penalized_scores
         
-        return logits
+        return mx.array(logits_np)
 
 
 class CombinedLogitsProcessor(LogitsProcessor):
