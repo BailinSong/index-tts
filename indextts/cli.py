@@ -17,6 +17,7 @@ def main():
     parser.add_argument("-d", "--device", type=str, default=None, help="Device to run the model on (cpu, cuda, mps, xpu)." )
     parser.add_argument("--mlx", action="store_true", default=False, help="Enable MLX optimizations for Apple Silicon M4")
     parser.add_argument("--diffusion-steps", type=int, default=20, help="Number of diffusion steps for S2MEL (default: 20, range: 10-25)")
+    parser.add_argument("--num-beams", type=int, default=1, help="Number of beams for beam search (default: 1=greedy, use 15 for best quality)")
     parser.add_argument("--deterministic", action="store_true", default=False, help="Use deterministic generation (argmax) instead of sampling for MLX")
     parser.add_argument("--debug", action="store_true", default=False, help="Enable debug output for MLX generation")
     args = parser.parse_args()
@@ -72,6 +73,7 @@ def main():
     )
     # 传递额外参数
     generation_kwargs = {}
+    generation_kwargs['num_beams'] = args.num_beams
     if args.deterministic:
         generation_kwargs['use_sampling'] = False
     if args.debug:

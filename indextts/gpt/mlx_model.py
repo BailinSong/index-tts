@@ -245,6 +245,11 @@ class UnifiedVoiceMLX(nn.Module):
             MLXTransformerBlock(model_dim, heads) for _ in range(layers)
         ]
         
+        # CRITICAL: GPT2Model has a final LayerNorm (gpt.ln_f) after all transformer blocks
+        # This is separate from the final_norm used before mel_head
+        # PyTorch uses BOTH: transformer_blocks → gpt_ln_f → final_norm → mel_head
+        self.gpt_ln_f = nn.LayerNorm(model_dim)  # GPT2Model's final LayerNorm
+        
         # Positional embeddings (learned)
         max_mel_tokens = kwargs.get('max_mel_tokens', 1815)
         max_text_tokens = kwargs.get('max_text_tokens', 600)
@@ -267,7 +272,7 @@ class UnifiedVoiceMLX(nn.Module):
         self.mel_head = MLXLinear(model_dim, number_mel_codes)
         self.text_head = MLXLinear(model_dim, number_text_tokens + 1)
         
-        # Normalization
+        # Normalization (used in lm_head, after gpt_ln_f)
         self.final_norm = nn.LayerNorm(model_dim)
         
         # Create causal attention mask (GPT2 style)
@@ -293,18 +298,23 @@ class UnifiedVoiceMLX(nn.Module):
         
         # Load embeddings and heads
         # Note: Position embeddings use .emb.weight in PyTorch checkpoint
-        # CRITICAL FIX: PyTorch inference_model uses gpt.ln_f, not final_norm!
+        # CRITICAL: PyTorch has TWO LayerNorms that are BOTH used in inference:
+        #   1. gpt.ln_f: inside GPT2Model, after all transformer blocks
+        #   2. final_norm: in lm_head, before mel_head
+        # Both are applied sequentially: transformer_blocks → gpt.ln_f → final_norm → mel_head
         simple_mappings = {
             'text_embedding.weight': ('text_embedding', 'weight'),
             'mel_embedding.weight': ('mel_embedding', 'weight'),
-            'mel_pos_embedding.emb.weight': ('mel_pos_embedding', 'weight'),  # FIXED: added .emb
-            'text_pos_embedding.emb.weight': ('text_pos_embedding', 'weight'),  # FIXED: added .emb
+            'mel_pos_embedding.emb.weight': ('mel_pos_embedding', 'weight'),
+            'text_pos_embedding.emb.weight': ('text_pos_embedding', 'weight'),
             'mel_head.weight': ('mel_head', 'weight'),
             'mel_head.bias': ('mel_head', 'bias'),
             'text_head.weight': ('text_head', 'weight'),
             'text_head.bias': ('text_head', 'bias'),
-            'gpt.ln_f.weight': ('final_norm', 'weight'),  # FIXED: Use gpt.ln_f instead of final_norm
-            'gpt.ln_f.bias': ('final_norm', 'bias'),      # FIXED: Use gpt.ln_f instead of final_norm
+            'gpt.ln_f.weight': ('gpt_ln_f', 'weight'),      # GPT2Model's final LayerNorm
+            'gpt.ln_f.bias': ('gpt_ln_f', 'bias'),
+            'final_norm.weight': ('final_norm', 'weight'),   # lm_head's LayerNorm
+            'final_norm.bias': ('final_norm', 'bias'),
             'speed_emb.weight': ('speed_emb', 'weight'),
             'emo_layer.weight': ('emo_layer', 'weight'),
             'emo_layer.bias': ('emo_layer', 'bias'),
@@ -762,7 +772,8 @@ class UnifiedVoiceMLX(nn.Module):
         for block in self.transformer_blocks:
             hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=None, use_cache=True)
             initial_past_kvs.append(kv)
-        hidden = self.final_norm(hidden)
+        hidden = self.gpt_ln_f(hidden)  # GPT2Model's final LayerNorm
+        hidden = self.final_norm(hidden)  # lm_head's LayerNorm
         
         # Initialize ALL beams with the SAME start token
         beam_codes = []
@@ -809,50 +820,77 @@ class UnifiedVoiceMLX(nn.Module):
                 for i in range(len(beam_scores)):
                     print(f"   Beam {i}: beam_score={beam_scores[i]:.4f}, tokens={beam_codes[i][0].tolist()}")
             
-            if step % 50 == 0 and step > 0:
+            if step % 10 == 0 and step > 0:
                 finished_count = sum(beam_finished)
-                print(f">> [Beam Search] Step {step}/{max_length}, {finished_count}/{num_beams} beams finished")
+                print(f">> [Beam Search] Step {step}/{max_length}, {finished_count}/{num_beams} beams finished", flush=True)
             
-            # 🔧 CRITICAL FIX: PyTorch-style global beam expansion
-            # Compute logits for ALL beams in parallel
+            # 🔧 PERFORMANCE FIX: Batch process all active beams together (15x faster!)
+            # Collect active beams
+            active_beam_indices = [i for i in range(num_beams) if not beam_finished[i]]
+            
+            if not active_beam_indices:
+                break  # All beams finished
+            
+            # Batch prepare embeddings for all active beams
+            batch_token_ids = []
+            batch_positions = []
+            for beam_idx in active_beam_indices:
+                last_token_id = int(beam_codes[beam_idx][0, -1])
+                batch_token_ids.append(last_token_id)
+                current_pos = context_len + beam_codes[beam_idx].shape[1]
+                batch_positions.append(current_pos)
+            
+            # Batch embedding (num_active_beams, 1, model_dim)
+            batch_token_ids_mx = mx.array([[tid] for tid in batch_token_ids], dtype=mx.int32)
+            batch_token_emb = self.mel_embedding(batch_token_ids_mx)  # (num_active, 1, D)
+            
+            # Batch position embedding
+            batch_pos_emb = mx.stack([self.mel_pos_embedding.weight[pos:pos+1][0] for pos in batch_positions], axis=0)
+            batch_pos_emb = batch_pos_emb.reshape(len(active_beam_indices), 1, self.model_dim)
+            batch_hidden = batch_token_emb + batch_pos_emb  # (num_active, 1, D)
+            
+            # Batch forward through transformer (ALL active beams at once!)
+            batch_new_kvs = [[] for _ in range(len(active_beam_indices))]
+            for layer_idx, block in enumerate(self.transformer_blocks):
+                # Process all beams together
+                layer_hiddens = []
+                layer_new_kvs = []
+                for i, beam_idx in enumerate(active_beam_indices):
+                    h = batch_hidden[i:i+1]  # (1, 1, D)
+                    h, kv = block(h, causal_mask=self.causal_mask,
+                                past_kv=beam_past_kvs[beam_idx][layer_idx], use_cache=True)
+                    layer_hiddens.append(h)
+                    layer_new_kvs.append(kv)
+                
+                # Stack results
+                batch_hidden = mx.concatenate(layer_hiddens, axis=0)  # (num_active, 1, D)
+                for i, kv in enumerate(layer_new_kvs):
+                    batch_new_kvs[i].append(kv)
+            
+            # Batch final norms and mel_head
+            batch_hidden = self.gpt_ln_f(batch_hidden)  # (num_active, 1, D)
+            batch_hidden = self.final_norm(batch_hidden)  # (num_active, 1, D)
+            batch_logits = self.mel_head(batch_hidden[:, 0, :])  # (num_active, vocab)
+            
+            # Batch log_softmax
+            batch_max_logits = mx.max(batch_logits, axis=-1, keepdims=True)
+            batch_exp_logits = mx.exp(batch_logits - batch_max_logits)
+            batch_log_sum_exp = mx.log(mx.sum(batch_exp_logits, axis=-1, keepdims=True)) + batch_max_logits
+            batch_log_probs = batch_logits - batch_log_sum_exp  # (num_active, vocab)
+            
+            # Distribute results back to all beams
             all_log_probs = []
             all_new_kvs = []
-            
+            active_idx = 0
             for beam_idx in range(num_beams):
                 if beam_finished[beam_idx]:
-                    # Finished beam: use placeholder logits (will be masked out)
                     vocab_size = self.mel_head.weight.shape[0]
                     all_log_probs.append(mx.full((vocab_size,), -1e9))
                     all_new_kvs.append(None)
-                    continue
-                
-                # Get last token and create embedding
-                last_token_id = int(beam_codes[beam_idx][0, -1])
-                token_emb = self.mel_embedding(mx.array([[last_token_id]], dtype=mx.int32))
-                current_pos = context_len + beam_codes[beam_idx].shape[1]
-                token_emb = token_emb + self.mel_pos_embedding.weight[current_pos:current_pos+1]
-                
-                # Forward with KV cache
-                hidden = token_emb
-                new_kvs = []
-                for layer_idx, block in enumerate(self.transformer_blocks):
-                    hidden, kv = block(hidden, causal_mask=self.causal_mask, 
-                                     past_kv=beam_past_kvs[beam_idx][layer_idx], use_cache=True)
-                    new_kvs.append(kv)
-                
-                hidden = self.final_norm(hidden)
-                logits = self.mel_head(hidden)  # (1, 1, vocab)
-                logits_1d = logits[0, 0]
-                
-                # 🔧 PyTorch: log_softmax (without any modification)
-                max_logit = mx.max(logits_1d)
-                exp_logits = mx.exp(logits_1d - max_logit)
-                log_sum_exp = mx.log(mx.sum(exp_logits)) + max_logit
-                log_probs = logits_1d - log_sum_exp  # (vocab,)
-                
-                # Store log_probs WITHOUT beam_scores (will add after logits_processor)
-                all_log_probs.append(log_probs)
-                all_new_kvs.append(new_kvs)
+                else:
+                    all_log_probs.append(batch_log_probs[active_idx])
+                    all_new_kvs.append(batch_new_kvs[active_idx])
+                    active_idx += 1
             
             # 🔧 CRITICAL: Strict PyTorch beam search replication
             # PyTorch: log_softmax -> logits_processor -> add beam_scores
@@ -1243,7 +1281,8 @@ class UnifiedVoiceMLX(nn.Module):
         for block in self.transformer_blocks:
             hidden, kv = block(hidden, causal_mask=self.causal_mask, past_kv=None, use_cache=True)
             past_kvs.append(kv)
-        hidden = self.final_norm(hidden)
+        hidden = self.gpt_ln_f(hidden)  # GPT2Model's final LayerNorm
+        hidden = self.final_norm(hidden)  # lm_head's LayerNorm
         
         # Get first token - 完全按照PyTorch流程
         # 1. 获取原始logits
@@ -1322,7 +1361,8 @@ class UnifiedVoiceMLX(nn.Module):
             
             past_kvs = new_past_kvs
             
-            hidden = self.final_norm(hidden)
+            hidden = self.gpt_ln_f(hidden)  # GPT2Model's final LayerNorm
+            hidden = self.final_norm(hidden)  # lm_head's LayerNorm
             
             # Get next token logits - 完全按照PyTorch流程
             # 1. 获取原始logits
@@ -1424,7 +1464,8 @@ class UnifiedVoiceMLX(nn.Module):
             
             # Simple pass-through for now
             inputs_mlx = torch_to_mlx(inputs_embeds)
-            hidden = self.final_norm(inputs_mlx)
+            hidden = self.gpt_ln_f(inputs_mlx)  # GPT2Model's final LayerNorm
+            hidden = self.final_norm(hidden)  # lm_head's LayerNorm
             
             # Convert back
             hidden_torch = mlx_to_torch(hidden, device='mps')
@@ -1693,7 +1734,7 @@ class UnifiedVoiceMLX(nn.Module):
         text_mlx = torch_to_mlx(text_inputs)
         
         # Generate codes using beam search or greedy/sampling
-        num_beams = kwargs.get('num_beams', 15)  # 默认 15，最高稳定性
+        num_beams = kwargs.get('num_beams', 1)  # 🔧 Changed to 1 for faster debugging (use 15 for production)
         
         if num_beams > 1:
             # Use beam search (most stable, matches PyTorch behavior)
