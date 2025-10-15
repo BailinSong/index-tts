@@ -214,6 +214,7 @@ class UnifiedVoiceMLX(nn.Module):
         self.start_mel_token = start_mel_token
         self.stop_mel_token = stop_mel_token
         self.use_mlx_conditioning = use_mlx_conditioning
+        self.mel_length_compression = kwargs.get('mel_length_compression', 1024)
         
         # Pure MLX conditioning (Conformer + Perceiver)
         if use_mlx_conditioning:
