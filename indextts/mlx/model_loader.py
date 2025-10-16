@@ -78,13 +78,14 @@ class MLXModelLoader:
             loaded_count = model.load_weights_from_dict(mlx_gpt_weights)
             print(f">> [MLX Loader] Loaded {loaded_count} GPT weights")
             
-            # JIT 预热
-            print(">> [MLX Loader] JIT Warmup: Pre-compiling Metal kernels...")
-            import time
-            start = time.time()
-            model.jit_warmup()
-            elapsed = time.time() - start
-            print(f">> [MLX Loader] JIT Warmup completed in {elapsed:.2f}s")
+            # JIT 预热（如果模型支持）
+            if hasattr(model, 'jit_warmup'):
+                print(">> [MLX Loader] JIT Warmup: Pre-compiling Metal kernels...")
+                import time
+                start = time.time()
+                model.jit_warmup()
+                elapsed = time.time() - start
+                print(f">> [MLX Loader] JIT Warmup completed in {elapsed:.2f}s")
             
             self.loaded_models['gpt'] = model
             print(">> [MLX Loader] ✓ GPT model loaded successfully")
