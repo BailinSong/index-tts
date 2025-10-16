@@ -109,7 +109,10 @@ class IndexTTS2:
         self.diffusion_steps = diffusion_steps  # Number of diffusion steps for S2MEL (default: 20)
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
 
-        self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
+        # 🎯 内存优化：Qwen Emotion 延迟加载（节省 ~1.2GB）
+        self.qwen_emo = None
+        self.qwen_emo_path = os.path.join(self.model_dir, self.cfg.qwen_emo_path)
+        print(">> Qwen Emotion: Lazy loading enabled (saves ~1.2GB)")
 
         # Load GPT model with MLX native implementation if enabled
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
@@ -556,6 +559,13 @@ class IndexTTS2:
             emo_vector = [vec * scale_factor for vec in emo_vector]
 
         return emo_vector
+    
+    def _ensure_qwen_loaded(self):
+        """延迟加载 Qwen Emotion 模型（仅在需要时加载）"""
+        if self.qwen_emo is None:
+            print(">> Loading Qwen Emotion model (first use)...")
+            self.qwen_emo = QwenEmotion(self.qwen_emo_path)
+            print(">> Qwen Emotion loaded (~1.2GB)")
 
     # 原始推理模式
     def infer(self, spk_audio_prompt, text, output_path,
@@ -634,6 +644,8 @@ class IndexTTS2:
             # automatically generate emotion vectors from text prompt
             if emo_text is None:
                 emo_text = text  # use main text prompt
+            # 延迟加载 Qwen Emotion 模型
+            self._ensure_qwen_loaded()
             emo_dict = self.qwen_emo.inference(emo_text)
             print(f"detected emotion vectors from text: {emo_dict}")
             # convert ordered dict to list of vectors; the order is VERY important!
