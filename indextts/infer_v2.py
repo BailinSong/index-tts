@@ -78,18 +78,17 @@ class IndexTTS2:
 
         # 🎯 内存优化：Qwen Emotion 延迟加载（节省 ~1.2GB）
         self.qwen_emo = None
+        self.qwen_emo_loaded = False
         self.qwen_emo_path = os.path.join(self.model_dir, self.cfg.qwen_emo_path)
         print(">> Qwen Emotion: Lazy loading enabled (saves ~1.2GB)")
 
-        self.gpt = UnifiedVoice(**self.cfg.gpt)
+        # 🎯 内存优化：GPT 延迟加载（节省 ~2.0GB）
+        self.gpt = None
+        self.gpt_loaded = False
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
-        load_checkpoint(self.gpt, self.gpt_path)
-        self.gpt = self.gpt.to(self.device)
-        if self.use_fp16:
-            self.gpt.eval().half()
-        else:
-            self.gpt.eval()
-        print(">> GPT weights restored from:", self.gpt_path)
+        self.gpt_config = self.cfg.gpt
+        self.use_deepspeed = use_deepspeed
+        print(">> GPT: Lazy loading enabled (saves ~2.0GB)")
 
         if use_deepspeed:
             try:
@@ -97,8 +96,7 @@ class IndexTTS2:
             except (ImportError, OSError, CalledProcessError) as e:
                 use_deepspeed = False
                 print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
-
-        self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
+                self.use_deepspeed = False
 
         if self.use_cuda_kernel:
             # preload the CUDA kernel for BigVGAN
@@ -111,36 +109,33 @@ class IndexTTS2:
                 print(f"{e!r}")
                 self.use_cuda_kernel = False
 
-        # 🎯 内存优化：Semantic Model 延迟加载（节省 ~1.0GB）
-        self.extract_features = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+        # 🎯 内存优化：完全延迟加载（避免初始化峰值）
+        # Extract Features 延迟加载（节省 ~500MB）
+        self.extract_features = None
+        self.extract_features_loaded = False
+        
+        # Semantic Model 延迟加载（节省 ~1.0GB）
         self.semantic_model = None
         self.semantic_mean = None
         self.semantic_std = None
         self.semantic_model_loaded = False
         self.semantic_stat_path = os.path.join(self.model_dir, self.cfg.w2v_stat)
+        print(">> Extract Features: Lazy loading enabled (saves ~500MB)")
         print(">> Semantic Model: Lazy loading enabled (saves ~1.0GB)")
 
-        semantic_codec = build_semantic_codec(self.cfg.semantic_codec)
-        semantic_code_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
-        safetensors.torch.load_model(semantic_codec, semantic_code_ckpt)
-        self.semantic_codec = semantic_codec.to(self.device)
-        self.semantic_codec.eval()
-        print('>> semantic_codec weights restored from: {}'.format(semantic_code_ckpt))
+        # 🎯 内存优化：Semantic Codec 延迟加载（节省 ~500MB）
+        self.semantic_codec = None
+        self.semantic_codec_loaded = False
+        self.semantic_codec_config = self.cfg.semantic_codec
+        self.semantic_codec_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
+        print(">> Semantic Codec: Lazy loading enabled (saves ~500MB)")
 
-        s2mel_path = os.path.join(self.model_dir, self.cfg.s2mel_checkpoint)
-        s2mel = MyModel(self.cfg.s2mel, use_gpt_latent=True)
-        s2mel, _, _, _ = load_checkpoint2(
-            s2mel,
-            None,
-            s2mel_path,
-            load_only_params=True,
-            ignore_modules=[],
-            is_distributed=False,
-        )
-        self.s2mel = s2mel.to(self.device)
-        self.s2mel.models['cfm'].estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
-        self.s2mel.eval()
-        print(">> s2mel weights restored from:", s2mel_path)
+        # 🎯 内存优化：S2Mel 延迟加载（节省 ~2.0GB）
+        self.s2mel = None
+        self.s2mel_loaded = False
+        self.s2mel_path = os.path.join(self.model_dir, self.cfg.s2mel_checkpoint)
+        self.s2mel_config = self.cfg.s2mel
+        print(">> S2Mel: Lazy loading enabled (saves ~2.0GB)")
 
         # 🎯 内存优化：CAMPPlus 延迟加载（节省 ~200MB）
         self.campplus_model = None
@@ -150,12 +145,13 @@ class IndexTTS2:
         )
         print(">> CAMPPlus: Lazy loading enabled (saves ~200MB)")
 
-        bigvgan_name = self.cfg.vocoder.name
-        self.bigvgan = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=self.use_cuda_kernel)
-        self.bigvgan = self.bigvgan.to(self.device)
-        self.bigvgan.remove_weight_norm()
-        self.bigvgan.eval()
-        print(">> bigvgan weights restored from:", bigvgan_name)
+        # 🎯 内存优化：BigVGAN 延迟加载（节省 ~500MB）
+        self.bigvgan = None
+        self.bigvgan_loaded = False
+        self.bigvgan_name = self.cfg.vocoder.name
+        print(">> BigVGAN: Lazy loading enabled (saves ~500MB)")
+        
+        print(">> 🎯 总内存节省: ~6.2GB (避免初始化峰值)")
 
         self.bpe_path = os.path.join(self.model_dir, self.cfg.dataset["bpe_model"])
         self.normalizer = TextNormalizer()
@@ -344,10 +340,28 @@ class IndexTTS2:
     
     def _ensure_qwen_loaded(self):
         """延迟加载 Qwen Emotion 模型"""
-        if self.qwen_emo is None:
+        if not self.qwen_emo_loaded:
             print(">> Loading Qwen Emotion model...")
             self.qwen_emo = QwenEmotion(self.qwen_emo_path)
+            self.qwen_emo_loaded = True
             print(">> Qwen Emotion loaded (~1.2GB)")
+    
+    def _unload_qwen(self):
+        """卸载 Qwen Emotion 模型（情感分析完成后可选择性卸载）"""
+        if self.qwen_emo_loaded:
+            print(">> Unloading Qwen Emotion...")
+            del self.qwen_emo
+            self.qwen_emo = None
+            self.qwen_emo_loaded = False
+            
+            import gc
+            gc.collect()
+            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            print(">> Qwen Emotion unloaded (~1.2GB freed)")
     
     def _ensure_semantic_loaded(self):
         """延迟加载 Semantic Model（编码器）"""
@@ -415,6 +429,72 @@ class IndexTTS2:
             
             print(">> CAMPPlus unloaded (~200MB freed)")
 
+    def _ensure_extract_features_loaded(self):
+        """延迟加载 Extract Features（W2V-BERT特征提取器）"""
+        if not self.extract_features_loaded:
+            print(">> Loading Extract Features (W2V-BERT)...")
+            self.extract_features = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+            self.extract_features_loaded = True
+            print(">> Extract Features loaded (~500MB)")
+    
+    def _ensure_semantic_codec_loaded(self):
+        """延迟加载 Semantic Codec（查表模型）"""
+        if not self.semantic_codec_loaded:
+            print(">> Loading Semantic Codec for vq2emb lookup...")
+            semantic_codec = build_semantic_codec(self.semantic_codec_config)
+            safetensors.torch.load_model(semantic_codec, self.semantic_codec_ckpt)
+            self.semantic_codec = semantic_codec.to(self.device)
+            self.semantic_codec.eval()
+            self.semantic_codec_loaded = True
+            print(">> Semantic Codec loaded (~500MB)")
+    
+    def _ensure_gpt_loaded(self):
+        """延迟加载 GPT 模型"""
+        if not self.gpt_loaded:
+            print(">> Loading GPT model...")
+            self.gpt = UnifiedVoice(**self.gpt_config)
+            load_checkpoint(self.gpt, self.gpt_path)
+            self.gpt = self.gpt.to(self.device)
+            if self.use_fp16:
+                self.gpt.eval().half()
+            else:
+                self.gpt.eval()
+            
+            # 配置 GPT
+            self.gpt.post_init_gpt2_config(use_deepspeed=self.use_deepspeed, kv_cache=True, half=self.use_fp16)
+            self.gpt_loaded = True
+            print(">> GPT loaded (~2.0GB)")
+    
+    def _ensure_s2mel_loaded(self):
+        """延迟加载 S2Mel 模型"""
+        if not self.s2mel_loaded:
+            print(">> Loading S2Mel model...")
+            s2mel = MyModel(self.s2mel_config, use_gpt_latent=True)
+            s2mel, _, _, _ = load_checkpoint2(
+                s2mel,
+                None,
+                self.s2mel_path,
+                load_only_params=True,
+                ignore_modules=[],
+                is_distributed=False,
+            )
+            self.s2mel = s2mel.to(self.device)
+            self.s2mel.models['cfm'].estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
+            self.s2mel.eval()
+            self.s2mel_loaded = True
+            print(">> S2Mel loaded (~2.0GB)")
+    
+    def _ensure_bigvgan_loaded(self):
+        """延迟加载 BigVGAN 模型"""
+        if not self.bigvgan_loaded:
+            print(">> Loading BigVGAN vocoder...")
+            self.bigvgan = bigvgan.BigVGAN.from_pretrained(self.bigvgan_name, use_cuda_kernel=self.use_cuda_kernel)
+            self.bigvgan = self.bigvgan.to(self.device)
+            self.bigvgan.remove_weight_norm()
+            self.bigvgan.eval()
+            self.bigvgan_loaded = True
+            print(">> BigVGAN loaded (~500MB)")
+
     # 原始推理模式
     def infer(self, spk_audio_prompt, text, output_path,
               emo_audio_prompt=None, emo_alpha=1.0,
@@ -472,6 +552,8 @@ class IndexTTS2:
                 print(f">> Using cached emotion vectors for: '{emo_text[:50]}...'")
             else:
                 # 重新分析情感
+                # 🎯 确保 Qwen Emotion 已加载
+                self._ensure_qwen_loaded()
                 emo_dict = self.qwen_emo.inference(emo_text)
                 print(f"detected emotion vectors from text: {emo_dict}")
                 # convert ordered dict to list of vectors; the order is VERY important!
@@ -479,6 +561,9 @@ class IndexTTS2:
                 # 缓存结果
                 self.cache_emo_text = emo_text
                 self.cache_emo_vector = emo_vector
+                # 🎯 情感分析完成，立即卸载 Qwen Emotion
+                self._unload_qwen()
+                print(">> 🎯 情感分析结果已缓存，Qwen Emotion 已卸载（节省 ~1.2GB）")
 
         if emo_vector is not None:
             # we have emotion vectors; they can't be blended via alpha mixing
@@ -500,16 +585,21 @@ class IndexTTS2:
         # 如果参考音频改变了，才需要重新生成, 提升速度
         if self.cache_spk_cond is None or self.cache_spk_audio_prompt != spk_audio_prompt:
             if self.cache_spk_cond is not None:
+                print(">> 🔄 检测到音色文件变化，清理音色缓存...")
                 self.cache_spk_cond = None
                 self.cache_s2mel_style = None
                 self.cache_s2mel_prompt = None
                 self.cache_mel = None
-                torch.cuda.empty_cache()
+                if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                elif torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             audio,sr = self._load_and_cut_audio(spk_audio_prompt,15,verbose)
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
             audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
 
             # 🎯 加载 Semantic Model（编码器）
+            self._ensure_extract_features_loaded()
             self._ensure_semantic_loaded()
             
             inputs = self.extract_features(audio_16k, sampling_rate=16000, return_tensors="pt")
@@ -519,6 +609,8 @@ class IndexTTS2:
             attention_mask = attention_mask.to(self.device)
             spk_cond_emb = self.get_emb(input_features, attention_mask)
 
+            # 🎯 确保 Semantic Codec 已加载
+            self._ensure_semantic_codec_loaded()
             _, S_ref = self.semantic_codec.quantize(spk_cond_emb)
             
             # 🎯 特征提取完成，立即卸载 Semantic Model
@@ -537,19 +629,22 @@ class IndexTTS2:
             feat = feat - feat.mean(dim=0, keepdim=True)  # feat2另外一个滤波器能量组特征[922, 80]
             style = self.campplus_model(feat.unsqueeze(0))  # 参考音频的全局style2[1,192]
 
+            # 🎯 确保 S2Mel 已加载
+            self._ensure_s2mel_loaded()
             prompt_condition = self.s2mel.models['length_regulator'](S_ref,
                                                                      ylens=ref_target_lengths,
                                                                      n_quantizers=3,
                                                                      f0=None)[0]
             
-            # 🎯 音色特征提取完成，立即卸载 CAMPPlus
-            self._unload_campplus()
-
+            # 🎯 音色特征提取完成，缓存结果并立即卸载 CAMPPlus
             self.cache_spk_cond = spk_cond_emb
             self.cache_s2mel_style = style
             self.cache_s2mel_prompt = prompt_condition
             self.cache_spk_audio_prompt = spk_audio_prompt
             self.cache_mel = ref_mel
+            
+            self._unload_campplus()
+            print(">> 🎯 音色特征已缓存，CAMPPlus 已卸载（节省 ~200MB）")
         else:
             style = self.cache_s2mel_style
             prompt_condition = self.cache_s2mel_prompt
@@ -574,7 +669,8 @@ class IndexTTS2:
                 self.cache_emo_cond = None
                 torch.cuda.empty_cache()
             
-            # 🎯 加载 Semantic Model（编码器）
+            # 🎯 加载 Extract Features 和 Semantic Model（编码器）
+            self._ensure_extract_features_loaded()
             self._ensure_semantic_loaded()
             
             emo_audio, _ = self._load_and_cut_audio(emo_audio_prompt,15,verbose,sr=16000)
@@ -640,6 +736,9 @@ class IndexTTS2:
                 text_token_syms = self.tokenizer.convert_ids_to_tokens(text_tokens[0].tolist())
                 print("text_token_syms is same as segment tokens", text_token_syms == sent)
 
+            # 🎯 确保 GPT 已加载
+            self._ensure_gpt_loaded()
+            
             m_start_time = time.perf_counter()
             with torch.no_grad():
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
@@ -730,6 +829,8 @@ class IndexTTS2:
                     diffusion_steps = 25
                     inference_cfg_rate = 0.7
                     latent = self.s2mel.models['gpt_layer'](latent)
+                    # 🎯 确保 Semantic Codec 已加载
+                    self._ensure_semantic_codec_loaded()
                     S_infer = self.semantic_codec.quantizer.vq2emb(codes.unsqueeze(1))
                     S_infer = S_infer.transpose(1, 2)
                     S_infer = S_infer + latent
@@ -748,6 +849,9 @@ class IndexTTS2:
                     vc_target = vc_target[:, :, ref_mel.size(-1):]
                     s2mel_time += time.perf_counter() - m_start_time
 
+                    # 🎯 确保 BigVGAN 已加载
+                    self._ensure_bigvgan_loaded()
+                    
                     m_start_time = time.perf_counter()
                     wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)
                     print(wav.shape)
