@@ -672,6 +672,12 @@ class IndexTTS2:
                                                                  ylens=target_lengths,
                                                                  n_quantizers=3,
                                                                  f0=None)[0]
+                    
+                    # MLX Fix: 处理 batch dimension 不匹配（插件化架构支持）
+                    if cond.shape[0] != prompt_condition.shape[0]:
+                        if cond.shape[0] > prompt_condition.shape[0]:
+                            cond = cond[:prompt_condition.shape[0]]
+                    
                     cat_condition = torch.cat([prompt_condition, cond], dim=1)
                     vc_target = self.s2mel.models['cfm'].inference(cat_condition,
                                                                    torch.LongTensor([cat_condition.size(1)]).to(
