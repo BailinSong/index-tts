@@ -7,12 +7,13 @@ MLX 工具模块
 __version__ = "2.0.0"
 
 # 导出主要组件
-from .cache import MLXCache
-from .utils import torch_to_mlx, mlx_to_torch
+from .cache import MLXModelCache
+from .utils import torch_to_mlx, mlx_to_torch, check_mlx_available
 
 __all__ = [
-    'MLXCache',
+    'MLXModelCache',
     'torch_to_mlx',
     'mlx_to_torch',
+    'check_mlx_available',
 ]
 
