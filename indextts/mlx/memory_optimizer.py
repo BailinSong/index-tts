@@ -7,6 +7,7 @@ Memory Optimizer - 统一管理所有内存优化策略
 3. 内存清理和监控
 """
 
+import os
 import gc
 import torch
 from typing import Any, Optional
