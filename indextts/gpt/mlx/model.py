@@ -1772,7 +1772,7 @@ class UnifiedVoiceMLX(nn.Module):
         
         Handles various calling patterns from inference code.
         """
-        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        from indextts.utils.mlx.utils import torch_to_mlx, mlx_to_torch
         
         # If called with inputs_embeds (typical PyTorch GPT usage)
         if 'inputs_embeds' in kwargs:
@@ -1832,7 +1832,7 @@ class UnifiedVoiceMLX(nn.Module):
         Returns:
             Conditioning latents (b, cond_num, model_dim) PyTorch tensor
         """
-        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        from indextts.utils.mlx.utils import torch_to_mlx, mlx_to_torch
         
         # Ensure correct shape (b, time, 1024)
         if speech_conditioning_input.shape[-1] != 1024:
@@ -1883,7 +1883,7 @@ class UnifiedVoiceMLX(nn.Module):
         if not self.use_mlx_conditioning or self.emo_conditioning_module is None:
             raise RuntimeError("MLX emotion conditioning not enabled")
         
-        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        from indextts.utils.mlx.utils import torch_to_mlx, mlx_to_torch
         
         # Ensure correct shape (b, time, 1024)
         if speech_conditioning_input.shape[-1] != 1024:
@@ -1930,7 +1930,7 @@ class UnifiedVoiceMLX(nn.Module):
         )
         
         # Apply emotion projection layers in MLX
-        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        from indextts.utils.mlx.utils import torch_to_mlx, mlx_to_torch
         
         emo_mlx = torch_to_mlx(emo_vec_syn_ori)  # (b, 1024)
         emo_vec_syn = self.emovec_layer(emo_mlx)  # (b, 1024) → (b, 1280)
@@ -2005,7 +2005,7 @@ class UnifiedVoiceMLX(nn.Module):
         Returns:
             Tuple of (codes, conditioning_latent) as PyTorch tensors
         """
-        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        from indextts.utils.mlx.utils import torch_to_mlx, mlx_to_torch
         import torch
         import mlx.core as mx
         
