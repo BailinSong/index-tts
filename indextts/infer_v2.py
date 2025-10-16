@@ -76,7 +76,10 @@ class IndexTTS2:
         self.dtype = torch.float16 if self.use_fp16 else None
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
 
-        self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
+        # 🎯 内存优化：Qwen Emotion 延迟加载（节省 ~1.2GB）
+        self.qwen_emo = None
+        self.qwen_emo_path = os.path.join(self.model_dir, self.cfg.qwen_emo_path)
+        print(">> Qwen Emotion: Lazy loading enabled (saves ~1.2GB)")
 
         self.gpt = UnifiedVoice(**self.cfg.gpt)
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
@@ -108,13 +111,14 @@ class IndexTTS2:
                 print(f"{e!r}")
                 self.use_cuda_kernel = False
 
+        # 🎯 内存优化：Semantic Model 延迟加载（节省 ~1.0GB）
         self.extract_features = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
-        self.semantic_model, self.semantic_mean, self.semantic_std = build_semantic_model(
-            os.path.join(self.model_dir, self.cfg.w2v_stat))
-        self.semantic_model = self.semantic_model.to(self.device)
-        self.semantic_model.eval()
-        self.semantic_mean = self.semantic_mean.to(self.device)
-        self.semantic_std = self.semantic_std.to(self.device)
+        self.semantic_model = None
+        self.semantic_mean = None
+        self.semantic_std = None
+        self.semantic_model_loaded = False
+        self.semantic_stat_path = os.path.join(self.model_dir, self.cfg.w2v_stat)
+        print(">> Semantic Model: Lazy loading enabled (saves ~1.0GB)")
 
         semantic_codec = build_semantic_codec(self.cfg.semantic_codec)
         semantic_code_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
@@ -138,15 +142,13 @@ class IndexTTS2:
         self.s2mel.eval()
         print(">> s2mel weights restored from:", s2mel_path)
 
-        # load campplus_model
-        campplus_ckpt_path = hf_hub_download(
+        # 🎯 内存优化：CAMPPlus 延迟加载（节省 ~200MB）
+        self.campplus_model = None
+        self.campplus_model_loaded = False
+        self.campplus_ckpt_path = hf_hub_download(
             "funasr/campplus", filename="campplus_cn_common.bin"
         )
-        campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
-        campplus_model.load_state_dict(torch.load(campplus_ckpt_path, map_location="cpu"))
-        self.campplus_model = campplus_model.to(self.device)
-        self.campplus_model.eval()
-        print(">> campplus_model weights restored from:", campplus_ckpt_path)
+        print(">> CAMPPlus: Lazy loading enabled (saves ~200MB)")
 
         bigvgan_name = self.cfg.vocoder.name
         self.bigvgan = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=self.use_cuda_kernel)
@@ -339,6 +341,79 @@ class IndexTTS2:
             emo_vector = [vec * scale_factor for vec in emo_vector]
 
         return emo_vector
+    
+    def _ensure_qwen_loaded(self):
+        """延迟加载 Qwen Emotion 模型"""
+        if self.qwen_emo is None:
+            print(">> Loading Qwen Emotion model...")
+            self.qwen_emo = QwenEmotion(self.qwen_emo_path)
+            print(">> Qwen Emotion loaded (~1.2GB)")
+    
+    def _ensure_semantic_loaded(self):
+        """延迟加载 Semantic Model（编码器）"""
+        if not self.semantic_model_loaded:
+            print(">> Loading Semantic Model (W2V-BERT) for audio encoding...")
+            from indextts.utils.maskgct_utils import build_semantic_model
+            self.semantic_model, self.semantic_mean, self.semantic_std = build_semantic_model(
+                self.semantic_stat_path
+            )
+            self.semantic_model = self.semantic_model.to(self.device)
+            self.semantic_model.eval()
+            self.semantic_mean = self.semantic_mean.to(self.device)
+            self.semantic_std = self.semantic_std.to(self.device)
+            self.semantic_model_loaded = True
+            print(">> Semantic Model loaded (~1.0GB)")
+    
+    def _unload_semantic(self):
+        """卸载 Semantic Model（编码器），保留 Codec（查表）"""
+        if self.semantic_model_loaded:
+            print(">> Unloading Semantic Model...")
+            del self.semantic_model
+            del self.semantic_mean
+            del self.semantic_std
+            self.semantic_model = None
+            self.semantic_mean = None
+            self.semantic_std = None
+            self.semantic_model_loaded = False
+            
+            import gc
+            gc.collect()
+            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            print(">> Semantic Model unloaded (~1.0GB freed)")
+            print(">> Semantic Codec kept for inference (vq2emb lookup)")
+    
+    def _ensure_campplus_loaded(self):
+        """延迟加载 CAMPPlus（音色编码器）"""
+        if not self.campplus_model_loaded:
+            print(">> Loading CAMPPlus for speaker style extraction...")
+            from indextts.s2mel.modules.campplus.DTDNN import CAMPPlus
+            campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
+            campplus_model.load_state_dict(torch.load(self.campplus_ckpt_path, map_location="cpu"))
+            self.campplus_model = campplus_model.to(self.device)
+            self.campplus_model.eval()
+            self.campplus_model_loaded = True
+            print(">> CAMPPlus loaded (~200MB)")
+    
+    def _unload_campplus(self):
+        """卸载 CAMPPlus（音色编码器）"""
+        if self.campplus_model_loaded:
+            print(">> Unloading CAMPPlus...")
+            del self.campplus_model
+            self.campplus_model = None
+            self.campplus_model_loaded = False
+            
+            import gc
+            gc.collect()
+            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            print(">> CAMPPlus unloaded (~200MB freed)")
 
     # 原始推理模式
     def infer(self, spk_audio_prompt, text, output_path,
@@ -434,6 +509,9 @@ class IndexTTS2:
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
             audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
 
+            # 🎯 加载 Semantic Model（编码器）
+            self._ensure_semantic_loaded()
+            
             inputs = self.extract_features(audio_16k, sampling_rate=16000, return_tensors="pt")
             input_features = inputs["input_features"]
             attention_mask = inputs["attention_mask"]
@@ -442,8 +520,16 @@ class IndexTTS2:
             spk_cond_emb = self.get_emb(input_features, attention_mask)
 
             _, S_ref = self.semantic_codec.quantize(spk_cond_emb)
+            
+            # 🎯 特征提取完成，立即卸载 Semantic Model
+            self._unload_semantic()
+            
             ref_mel = self.mel_fn(audio_22k.to(spk_cond_emb.device).float())
             ref_target_lengths = torch.LongTensor([ref_mel.size(2)]).to(ref_mel.device)
+            
+            # 🎯 加载 CAMPPlus（音色编码器）
+            self._ensure_campplus_loaded()
+            
             feat = torchaudio.compliance.kaldi.fbank(audio_16k.to(ref_mel.device),
                                                      num_mel_bins=80,
                                                      dither=0,
@@ -455,6 +541,9 @@ class IndexTTS2:
                                                                      ylens=ref_target_lengths,
                                                                      n_quantizers=3,
                                                                      f0=None)[0]
+            
+            # 🎯 音色特征提取完成，立即卸载 CAMPPlus
+            self._unload_campplus()
 
             self.cache_spk_cond = spk_cond_emb
             self.cache_s2mel_style = style
@@ -484,6 +573,10 @@ class IndexTTS2:
             if self.cache_emo_cond is not None:
                 self.cache_emo_cond = None
                 torch.cuda.empty_cache()
+            
+            # 🎯 加载 Semantic Model（编码器）
+            self._ensure_semantic_loaded()
+            
             emo_audio, _ = self._load_and_cut_audio(emo_audio_prompt,15,verbose,sr=16000)
             emo_inputs = self.extract_features(emo_audio, sampling_rate=16000, return_tensors="pt")
             emo_input_features = emo_inputs["input_features"]
@@ -494,6 +587,9 @@ class IndexTTS2:
 
             self.cache_emo_cond = emo_cond_emb
             self.cache_emo_audio_prompt = emo_audio_prompt
+            
+            # 🎯 特征提取完成，立即卸载 Semantic Model
+            self._unload_semantic()
         else:
             emo_cond_emb = self.cache_emo_cond
 
