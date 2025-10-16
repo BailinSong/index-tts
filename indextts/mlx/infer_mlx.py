@@ -47,51 +47,54 @@ class IndexTTS2MLX(IndexTTS2):
     
     def __init__(
         self,
-        model_dir: str,
-        config_path: Optional[str] = None,
-        use_mlx: bool = True,
-        mlx_memory_optimization: bool = True,
-        **kwargs
+        cfg_path: str = "checkpoints/config.yaml",
+        model_dir: str = "checkpoints",
+        use_fp16: bool = False,
+        device: Optional[str] = None,
+        use_cuda_kernel: Optional[bool] = None,
+        use_deepspeed: bool = False,
+        diffusion_steps: int = 20,
+        mlx_memory_optimization: bool = True
     ):
         """
         初始化 MLX 优化版本
         
-        Args:
-            model_dir: 模型目录
-            config_path: 配置文件路径
-            use_mlx: 是否启用 MLX 优化（默认 True）
-            mlx_memory_optimization: 是否启用内存优化（默认 True）
-            **kwargs: 传递给父类的其他参数
-        """
-        # 保存 MLX 配置
-        self.use_mlx_flag = use_mlx
-        self.mlx_memory_optimization = mlx_memory_optimization
+        使用与 IndexTTS2 完全相同的参数签名，以保持兼容性
         
-        # 初始化 MLX 组件（如果启用）
+        Args:
+            cfg_path: 配置文件路径
+            model_dir: 模型目录
+            use_fp16: 是否使用 fp16
+            device: 设备
+            use_cuda_kernel: 是否使用 CUDA kernel
+            use_deepspeed: 是否使用 DeepSpeed
+            diffusion_steps: Diffusion steps
+            mlx_memory_optimization: 是否启用内存优化（默认 True）
+        """
+        print("\n" + "="*70)
+        print("IndexTTS2MLX: MLX Optimization Enabled")
+        print("="*70)
+        print("Strategy: Inheritance + Plugin Architecture")
+        print(f"Memory Optimization: {'Enabled' if mlx_memory_optimization else 'Disabled'}")
+        print("="*70 + "\n")
+        
+        # 保存 MLX 配置
+        self.mlx_memory_optimization = mlx_memory_optimization
         self.mlx_loader = None
         self.memory_optimizer = None
-        self.mlx_models_loaded = False
         
-        if self.use_mlx_flag:
-            print("\n" + "="*70)
-            print("IndexTTS2MLX: MLX Optimization Enabled")
-            print("="*70)
-            print("Strategy: Inheritance + Plugin Architecture")
-            print("Memory Optimization: Enabled" if mlx_memory_optimization else "Memory Optimization: Disabled")
-            print("="*70 + "\n")
-        
-        # 调用父类初始化
-        # 注意: 父类会加载 PyTorch 模型，我们稍后会替换它们
+        # 调用父类初始化（加载 PyTorch 模型）
         super().__init__(
+            cfg_path=cfg_path,
             model_dir=model_dir,
-            config_path=config_path,
-            use_mlx=False,  # 让父类以 PyTorch 模式初始化
-            **kwargs
+            use_fp16=use_fp16,
+            device=device,
+            use_cuda_kernel=use_cuda_kernel,
+            use_deepspeed=use_deepspeed
         )
         
-        # 后处理：如果启用 MLX，替换模型
-        if self.use_mlx_flag:
-            self._apply_mlx_optimizations()
+        # 后处理：替换为 MLX 模型
+        self._apply_mlx_optimizations()
     
     def _apply_mlx_optimizations(self):
         """
@@ -137,27 +140,48 @@ class IndexTTS2MLX(IndexTTS2):
         """
         替换 PyTorch GPT 为 MLX 版本
         
-        步骤:
-        1. 删除已加载的 PyTorch GPT
-        2. 加载 MLX GPT
-        3. 更新标志位
+        从备份的完整实现中提取 MLX 加载逻辑
         """
         print(">> [IndexTTS2MLX] Replacing PyTorch GPT with MLX...")
+        print("\n>> [Model 1/4] Creating Pure MLX GPT (MLX Cond + MLX Transformer)...")
         
-        # 删除 PyTorch GPT，释放内存
-        if hasattr(self, 'gpt') and self.gpt is not None:
-            del self.gpt
-            self.gpt = None
-            import gc
-            gc.collect()
-            torch.mps.empty_cache()
-            print(">> [IndexTTS2MLX] ✓ PyTorch GPT removed (~2.5GB freed)")
-        
-        # 加载 MLX GPT
-        self.mlx_transformer, is_mlx = self.mlx_loader.load_gpt(self.gpt_path)
-        self.gpt_is_mlx = is_mlx
-        
-        print(">> [IndexTTS2MLX] ✓ MLX GPT loaded successfully")
+        try:
+            # 删除已加载的 PyTorch GPT，释放内存
+            if hasattr(self, 'gpt') and self.gpt is not None:
+                del self.gpt
+                self.gpt = None
+                import gc
+                gc.collect()
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                print(">> [IndexTTS2MLX] PyTorch GPT removed (~2.5GB freed)")
+            
+            # 加载 MLX GPT
+            self.mlx_transformer, is_mlx = self.mlx_loader.load_gpt(self.gpt_path)
+            self.gpt_is_mlx = is_mlx
+            
+            if is_mlx:
+                print(">> ✓ Pure MLX GPT loaded successfully")
+                print(">> ✓ PyTorch GPT skipped (saved ~2.5GB memory)")
+                print("   (MLX: Conformer + Perceiver + Emotion Conditioning)")
+            else:
+                print(">> Warning: MLX GPT loading returned is_mlx=False")
+                
+        except Exception as e:
+            print(f">> [IndexTTS2MLX] MLX GPT loading failed: {e}")
+            import traceback
+            traceback.print_exc()
+            print(">> [IndexTTS2MLX] Falling back to PyTorch...")
+            # 重新加载 PyTorch GPT
+            from indextts.gpt.model_v2 import UnifiedVoice
+            from indextts.utils.checkpoint import load_checkpoint
+            self.gpt = UnifiedVoice(**self.cfg.gpt)
+            load_checkpoint(self.gpt, self.gpt_path)
+            self.gpt = self.gpt.to(self.device)
+            self.gpt.eval()
+            self.gpt_is_mlx = False
+            self.mlx_transformer = None
+            print(">> GPT weights restored from:", self.gpt_path)
     
     def _apply_memory_optimizations(self):
         """

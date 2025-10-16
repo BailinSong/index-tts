@@ -41,6 +41,11 @@ class MLXModelLoader:
         """初始化 MLX 缓存"""
         from indextts.utils.mlx.cache import MLXModelCache
         
+        # 检查 MLX 是否可用
+        from indextts.utils.mlx.utils import check_mlx_available
+        if not check_mlx_available():
+            raise RuntimeError("MLX not available on this system")
+        
         cache_dir = os.path.join(self.model_dir, "mlx")
         self.mlx_cache = MLXModelCache(cache_dir=cache_dir)
         print(f">> [MLX Loader] Cache Directory: {cache_dir}")
