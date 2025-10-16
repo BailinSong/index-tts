@@ -57,8 +57,8 @@ class IndexTTS2:
         self.mlx_cache = None
         
         if use_mlx:
-            from indextts.utils.mlx_utils import check_mlx_available
-            from indextts.utils.mlx_cache import MLXModelCache
+            from indextts.utils.mlx.utils import check_mlx_available
+            from indextts.utils.mlx.cache import MLXModelCache
             
             self.mlx_available = check_mlx_available()
             if self.mlx_available:
@@ -122,7 +122,7 @@ class IndexTTS2:
         if self.use_mlx and self.mlx_available:
             print("\n>> [Model 1/4] Creating Pure MLX GPT (MLX Cond + MLX Transformer)...")
             try:
-                from indextts.gpt.mlx_model import UnifiedVoiceMLX
+                from indextts.gpt.mlx.model import UnifiedVoiceMLX
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
                 # Create MLX model with PURE MLX mode
                 self.mlx_transformer = UnifiedVoiceMLX(

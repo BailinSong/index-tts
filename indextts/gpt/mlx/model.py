@@ -218,7 +218,7 @@ class UnifiedVoiceMLX(nn.Module):
         
         # Pure MLX conditioning (Conformer + Perceiver)
         if use_mlx_conditioning:
-            from indextts.gpt.mlx_conditioning import MLXConditioningModule
+            from indextts.gpt.mlx.conditioning import MLXConditioningModule
             
             # Speaker conditioning (32 latents)
             self.conditioning_module = MLXConditioningModule(
@@ -1426,10 +1426,10 @@ class UnifiedVoiceMLX(nn.Module):
         import os
         # 🚀 使用优化版本的logits processors
         try:
-            from indextts.gpt.mlx_logits_processors_optimized import LogitsProcessorList
+            from indextts.gpt.mlx.logits_processors import LogitsProcessorList
             use_optimized = True
         except ImportError:
-            from indextts.gpt.mlx_logits_processors import (
+            from indextts.gpt.mlx.logits_processors import (
                 LogitsProcessorList,
                 TemperatureLogitsWarper,
                 RepetitionPenaltyLogitsProcessor,
@@ -1477,7 +1477,7 @@ class UnifiedVoiceMLX(nn.Module):
             print(f">> [MLX] Logits processors (optimized): {[type(p).__name__ for p in logits_processor]}")
         else:
             # 回退到原始实现
-            from indextts.gpt.mlx_logits_processors import (
+            from indextts.gpt.mlx.logits_processors import (
                 TemperatureLogitsWarper,
                 RepetitionPenaltyLogitsProcessor,
                 TopPLogitsWarper,
