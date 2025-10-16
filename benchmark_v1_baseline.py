@@ -4,7 +4,7 @@
 4次运行，忽略第1次预热，后3次计算平均值作为V1基准
 """
 
-from indextts.infer_v2 import IndexTTS2
+from indextts.infer_v2 import create_tts
 import time
 import statistics
 
@@ -36,7 +36,7 @@ print(f"  基准数据: 后3次的平均值")
 
 # 初始化（只初始化一次，保持缓存）
 print(f"\n初始化 IndexTTS2...")
-tts = IndexTTS2(use_mlx=True)
+tts = create_tts(use_mlx=True)
 
 # 运行测试
 results = []
