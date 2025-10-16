@@ -192,6 +192,10 @@ class IndexTTS2:
         self.cache_emo_cond = None
         self.cache_emo_audio_prompt = None
         self.cache_mel = None
+        
+        # 🎯 缓存情感文本分析结果（节省 0.5-2.0s）
+        self.cache_emo_text = None
+        self.cache_emo_vector = None
 
         # 进度引用显示（可选）
         self.gr_progress = None
@@ -385,10 +389,21 @@ class IndexTTS2:
             # automatically generate emotion vectors from text prompt
             if emo_text is None:
                 emo_text = text  # use main text prompt
-            emo_dict = self.qwen_emo.inference(emo_text)
-            print(f"detected emotion vectors from text: {emo_dict}")
-            # convert ordered dict to list of vectors; the order is VERY important!
-            emo_vector = list(emo_dict.values())
+            
+            # 🎯 检查情感文本缓存（节省 0.5-2.0s）
+            if self.cache_emo_text == emo_text:
+                # 复用缓存的情感向量
+                emo_vector = self.cache_emo_vector
+                print(f">> Using cached emotion vectors for: '{emo_text[:50]}...'")
+            else:
+                # 重新分析情感
+                emo_dict = self.qwen_emo.inference(emo_text)
+                print(f"detected emotion vectors from text: {emo_dict}")
+                # convert ordered dict to list of vectors; the order is VERY important!
+                emo_vector = list(emo_dict.values())
+                # 缓存结果
+                self.cache_emo_text = emo_text
+                self.cache_emo_vector = emo_vector
 
         if emo_vector is not None:
             # we have emotion vectors; they can't be blended via alpha mixing
