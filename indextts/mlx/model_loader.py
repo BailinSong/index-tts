@@ -97,96 +97,110 @@ class MLXModelLoader:
             traceback.print_exc()
             raise
     
-    def load_s2mel(self, checkpoint_path: str) -> tuple:
+    def load_s2mel_mlx_modules(self) -> tuple:
         """
-        加载 MLX S2MEL 模型
+        加载 S2MEL 的 MLX 优化模块
         
-        Args:
-            checkpoint_path: S2MEL checkpoint 路径
-            
         Returns:
-            (model, has_mlx_modules): S2MEL 模型和 MLX 模块标志
+            (mlx_gpt_layer, mlx_length_regulator): MLX 模块或 None
         """
-        print(">> [MLX Loader] Loading S2MEL model...")
+        print("\n>> [Model 2/4] Loading S2MEL with MLX optimization...")
         
         try:
-            from indextts.s2mel.models import S2Mel
+            s2mel_path = os.path.join(self.model_dir, self.config.s2mel_checkpoint)
+            mlx_s2mel_weights = self.mlx_cache.get_or_convert("s2mel", s2mel_path)
+            print(">> MLX S2MEL weights ready")
             
-            # 获取或转换 S2MEL 权重
-            mlx_s2mel_weights = self.mlx_cache.get_or_convert("s2mel", checkpoint_path)
+            from indextts.s2mel.mlx_modules import MLXGPTLayer, MLXInterpolateRegulator
             
-            # 创建 S2MEL 模型
-            model = S2Mel(**self.config.s2mel)
+            # MLX GPT Layer
+            print(">> Creating MLX GPT Layer...")
+            mlx_gpt_layer = MLXGPTLayer()
             
-            # 创建 MLX 模块
-            from indextts.s2mel.mlx_modules.gpt_layer import MLXGPTLayer
-            from indextts.s2mel.mlx_modules.length_regulator import MLXLengthRegulator
+            # 加载 weights
+            prefix = 'gpt_layer.'
+            if f'{prefix}0.weight' in mlx_s2mel_weights:
+                mlx_gpt_layer.layer1.weight = mlx_s2mel_weights[f'{prefix}0.weight']
+                mlx_gpt_layer.layer1.bias = mlx_s2mel_weights[f'{prefix}0.bias']
+                mlx_gpt_layer.layer2.weight = mlx_s2mel_weights[f'{prefix}1.weight']
+                mlx_gpt_layer.layer2.bias = mlx_s2mel_weights[f'{prefix}1.bias']
+                mlx_gpt_layer.layer3.weight = mlx_s2mel_weights[f'{prefix}2.weight']
+                mlx_gpt_layer.layer3.bias = mlx_s2mel_weights[f'{prefix}2.bias']
+                print("   ✓ MLX GPT Layer weights loaded")
+            else:
+                print("   ⚠️  GPT Layer weights not found, skipping")
+                mlx_gpt_layer = None
             
-            # 加载 MLX GPT Layer
-            model.mlx_gpt_layer = MLXGPTLayer(self.config.s2mel)
-            model.mlx_gpt_layer.load_weights(mlx_s2mel_weights.get('gpt_layer', {}))
-            print(">> [MLX Loader] ✓ MLX GPT Layer loaded")
-            
-            # 加载 MLX Length Regulator
-            model.mlx_length_regulator = MLXLengthRegulator(self.config.s2mel)
-            model.mlx_length_regulator.load_weights(mlx_s2mel_weights.get('length_regulator', {}))
-            print(">> [MLX Loader] ✓ MLX Length Regulator loaded")
-            
-            # 加载其他 PyTorch 组件
-            from indextts.utils.checkpoint import load_checkpoint
-            load_checkpoint(model, checkpoint_path)
-            model = model.to(self.device)
-            model.eval()
-            
-            self.loaded_models['s2mel'] = model
-            print(">> [MLX Loader] ✓ S2MEL model loaded successfully")
-            
-            return model, True
-            
-        except Exception as e:
-            print(f">> [MLX Loader] Failed to load S2MEL: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-    
-    def load_vocoder(self, vocoder_name: str = "nvidia/bigvgan_v2_22khz_80band_256x") -> Any:
-        """
-        加载 MLX BigVGAN 声码器
-        
-        Args:
-            vocoder_name: 声码器名称
-            
-        Returns:
-            BigVGAN 模型实例
-        """
-        print(">> [MLX Loader] Loading BigVGAN vocoder...")
-        
-        try:
-            from indextts.s2mel.modules.bigvgan.bigvgan import BigVGAN
-            
-            # 加载 BigVGAN
-            print(f"Loading weights from {vocoder_name}")
-            model = BigVGAN.from_pretrained(
-                vocoder_name,
-                use_cuda_kernel=False  # MLX 模式不使用 CUDA
+            # MLX Length Regulator
+            print(">> Creating MLX Length Regulator...")
+            mlx_length_regulator = MLXInterpolateRegulator(
+                channels=self.config.s2mel.length_regulator.channels,
+                sampling_ratios=self.config.s2mel.length_regulator.sampling_ratios,
+                is_discrete=self.config.s2mel.length_regulator.is_discrete,
+                in_channels=getattr(self.config.s2mel.length_regulator, "in_channels", None),
+                vector_quantize=getattr(self.config.s2mel.length_regulator, "vector_quantize", False),
+                codebook_size=self.config.s2mel.length_regulator.content_codebook_size,
+                n_codebooks=getattr(self.config.s2mel.length_regulator, "n_codebooks", 1),
+                f0_condition=getattr(self.config.s2mel.length_regulator, "f0_condition", False),
+                n_f0_bins=getattr(self.config.s2mel.length_regulator, "n_f0_bins", 512),
             )
-            model = model.to(self.device)
-            model.eval()
             
-            # 缓存模型
-            model.cache_model()
-            print(">> [MLX Loader] BigVGAN already cached")
+            # 加载 Length Regulator weights
+            lr_prefix = 'length_regulator.'
+            lr_weights_found = False
+            if f'{lr_prefix}content_in_proj.weight' in mlx_s2mel_weights:
+                mlx_length_regulator.content_in_proj.weight = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.weight']
+                mlx_length_regulator.content_in_proj.bias = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.bias']
+                lr_weights_found = True
             
-            self.loaded_models['vocoder'] = model
-            print(">> [MLX Loader] ✓ BigVGAN loaded successfully")
+            # 加载 model layers
+            layer_idx = 0
+            while f'{lr_prefix}model.{layer_idx}.weight' in mlx_s2mel_weights:
+                if layer_idx < len(mlx_length_regulator.model):
+                    mlx_layer = mlx_length_regulator.model[layer_idx]
+                    if hasattr(mlx_layer, 'weight'):
+                        mlx_layer.weight = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.weight']
+                        if f'{lr_prefix}model.{layer_idx}.bias' in mlx_s2mel_weights:
+                            mlx_layer.bias = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.bias']
+                        lr_weights_found = True
+                layer_idx += 1
             
-            return model
+            if lr_weights_found:
+                print("   ✓ MLX Length Regulator weights loaded")
+            else:
+                print("   ⚠️  Length Regulator weights not found, skipping")
+                mlx_length_regulator = None
+            
+            if mlx_gpt_layer or mlx_length_regulator:
+                print(">> ✓ S2MEL MLX modules ready")
+            
+            return mlx_gpt_layer, mlx_length_regulator
             
         except Exception as e:
-            print(f">> [MLX Loader] Failed to load BigVGAN: {e}")
+            print(f">> [MLX Loader] S2MEL MLX modules creation failed: {e}")
             import traceback
             traceback.print_exc()
-            raise
+            return None, None
+    
+    def cache_bigvgan(self, bigvgan_model) -> None:
+        """
+        缓存 BigVGAN 权重到 MLX 格式
+        
+        Args:
+            bigvgan_model: 已加载的 BigVGAN 模型
+        """
+        print("\n>> [Model 3/4] Loading BigVGAN with MLX optimization...")
+        
+        try:
+            if not self.mlx_cache.is_cached("bigvgan"):
+                print(">> Caching BigVGAN weights in MLX format...")
+                self.mlx_cache.convert_and_cache("bigvgan", state_dict=bigvgan_model.state_dict())
+            else:
+                print(">> BigVGAN already cached")
+            
+            print(">> BigVGAN: Running on MPS with MLX optimizations")
+        except Exception as e:
+            print(f">> BigVGAN caching skipped: {e}")
     
     def get_loaded_model(self, model_name: str) -> Optional[Any]:
         """
