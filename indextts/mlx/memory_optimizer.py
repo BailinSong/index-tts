@@ -31,43 +31,44 @@ class MemoryOptimizer:
         策略: 按需加载/卸载
         节省: ~1.0GB
         
-        Args:
-            tts_instance: IndexTTS2 或 IndexTTS2MLX 实例
+        完全替换父类已加载的 semantic_model
         """
         print(">> [Memory Opt] Applying Semantic Model optimization...")
         
-        # 保存原始的提取器和模型路径
-        original_extract_features = tts_instance.extract_features
-        model_path = "facebook/w2v-bert-2.0"
-        stat_path = tts_instance.semantic_stat_path if hasattr(tts_instance, 'semantic_stat_path') else None
+        # 获取必要信息
+        stat_path = os.path.join(tts_instance.model_dir, tts_instance.cfg.w2v_stat)
         device = tts_instance.device
         
-        # 如果模型已加载，先卸载
+        # 删除父类加载的 Semantic Model
         if hasattr(tts_instance, 'semantic_model') and tts_instance.semantic_model is not None:
-            print(">> [Memory Opt] Unloading existing Semantic Model...")
             del tts_instance.semantic_model
-            if hasattr(tts_instance, 'semantic_mean'):
-                del tts_instance.semantic_mean
-            if hasattr(tts_instance, 'semantic_std'):
-                del tts_instance.semantic_std
+            del tts_instance.semantic_mean
+            del tts_instance.semantic_std
             gc.collect()
-            torch.mps.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            print(">> [Memory Opt] Existing Semantic Model removed")
         
         # 创建延迟加载包装器
         self.semantic_wrapper = LazySemanticModel(
-            model_path=model_path,
+            model_path="facebook/w2v-bert-2.0",
             stat_path=stat_path,
-            device=device,
-            extract_features=original_extract_features
+            device=device
         )
         
-        # 替换实例的方法
-        tts_instance.semantic_model = None
+        # 替换实例的属性和方法
+        tts_instance.semantic_model = self.semantic_wrapper
         tts_instance.semantic_mean = None
         tts_instance.semantic_std = None
+        tts_instance.semantic_model_loaded = False  # 兼容性标志
         tts_instance._ensure_semantic_loaded = self.semantic_wrapper.ensure_loaded
         tts_instance._unload_semantic = self.semantic_wrapper.unload
-        tts_instance.get_emb = self.semantic_wrapper.get_emb
+        
+        # 重写 get_emb 方法
+        original_get_emb = tts_instance.get_emb
+        def get_emb_with_lazy_loading(input_features, attention_mask):
+            return self.semantic_wrapper.get_emb(input_features, attention_mask)
+        tts_instance.get_emb = get_emb_with_lazy_loading
         
         print(">> [Memory Opt] ✓ Semantic Model: Lazy loading enabled (saves ~1.0GB)")
     
@@ -78,30 +79,26 @@ class MemoryOptimizer:
         策略: 延迟加载
         节省: ~1.2GB
         
-        Args:
-            tts_instance: IndexTTS2 或 IndexTTS2MLX 实例
+        完全替换父类已加载的 qwen_emo
         """
         print(">> [Memory Opt] Applying Qwen Emotion optimization...")
         
-        # 保存模型路径
-        if hasattr(tts_instance, 'qwen_emo_path'):
-            qwen_path = tts_instance.qwen_emo_path
-        else:
-            import os
-            qwen_path = os.path.join(tts_instance.model_dir, tts_instance.cfg.qwen_emo_path)
+        # 获取路径
+        qwen_path = os.path.join(tts_instance.model_dir, tts_instance.cfg.qwen_emo_path)
         
-        # 如果模型已加载，先卸载
+        # 删除父类加载的 Qwen Emotion
         if hasattr(tts_instance, 'qwen_emo') and tts_instance.qwen_emo is not None:
-            print(">> [Memory Opt] Unloading existing Qwen Emotion...")
             del tts_instance.qwen_emo
             gc.collect()
-            torch.mps.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            print(">> [Memory Opt] Existing Qwen Emotion removed")
         
         # 创建延迟加载包装器
         self.qwen_wrapper = LazyQwenEmotion(qwen_path)
         
-        # 替换实例的属性和方法
-        tts_instance.qwen_emo = None
+        # 替换实例的属性
+        tts_instance.qwen_emo = self.qwen_wrapper
         tts_instance.qwen_emo_path = qwen_path
         tts_instance._ensure_qwen_loaded = self.qwen_wrapper.ensure_loaded
         
@@ -129,14 +126,13 @@ class LazySemanticModel:
     """
     延迟加载的 Semantic Model 包装器
     
-    自动管理模型的加载和卸载
+    完全替换 IndexTTS2 的 semantic_model,实现按需加载/卸载
     """
     
-    def __init__(self, model_path: str, stat_path: Optional[str], device: str, extract_features):
+    def __init__(self, model_path: str, stat_path: str, device: str):
         self.model_path = model_path
         self.stat_path = stat_path
         self.device = device
-        self.extract_features = extract_features
         
         self.model = None
         self.mean = None
@@ -144,52 +140,48 @@ class LazySemanticModel:
         self.loaded = False
     
     def ensure_loaded(self):
-        """确保模型已加载"""
+        """延迟加载 Semantic Model（仅在提取特征时加载）"""
         if not self.loaded:
-            self._load()
-    
-    def _load(self):
-        """加载模型"""
-        print(">> Loading Semantic Model (W2V-BERT) for feature extraction...")
-        
-        from transformers import Wav2Vec2BertModel
-        
-        self.model = Wav2Vec2BertModel.from_pretrained(self.model_path)
-        self.model = self.model.to(self.device)
-        self.model.eval()
-        
-        # 加载统计数据
-        if self.stat_path:
-            import numpy as np
-            stat = np.load(self.stat_path)
-            self.mean = torch.from_numpy(stat['mean']).to(self.device)
-            self.std = torch.from_numpy(stat['std']).to(self.device)
-        
-        self.loaded = True
-        print(">> Semantic Model loaded (~1.0GB)")
+            print(">> Loading Semantic Model (W2V-BERT) for feature extraction...")
+            from indextts.utils.maskgct_utils import build_semantic_model
+            
+            self.model, self.mean, self.std = build_semantic_model(self.stat_path)
+            self.model = self.model.to(self.device)
+            self.model.eval()
+            self.mean = self.mean.to(self.device)
+            self.std = self.std.to(self.device)
+            self.loaded = True
+            print(">> Semantic Model loaded (~1.0GB)")
     
     def unload(self):
-        """卸载模型，释放内存"""
+        """卸载 Semantic Model，释放内存"""
         if self.loaded:
+            print(">> Unloading Semantic Model...")
             del self.model
             del self.mean
             del self.std
             self.model = None
             self.mean = None
             self.std = None
-            gc.collect()
-            torch.mps.empty_cache()
             self.loaded = False
+            
+            # 清理内存
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            
             print(">> Semantic Model unloaded (~1.0GB freed)")
     
     def get_emb(self, input_features, attention_mask):
         """
         提取语义嵌入
         
-        自动加载模型（如果未加载）
+        这个方法会被父类的 get_emb 调用
         """
+        # 确保模型已加载
         self.ensure_loaded()
         
+        # 调用实际模型
         with torch.no_grad():
             vq_emb = self.model(
                 input_features=input_features,
@@ -198,26 +190,37 @@ class LazySemanticModel:
             )
             feat = vq_emb.hidden_states[17]  # (B, T, C)
             
-            # 归一化
-            if self.mean is not None and self.std is not None:
-                feat = (feat - self.mean) / self.std
+            # Normalize
+            feat = (feat - self.mean) / self.std
             
             return feat
     
-    def __enter__(self):
-        """支持 context manager"""
+    def __call__(self, *args, **kwargs):
+        """支持直接调用"""
         self.ensure_loaded()
+        return self.model(*args, **kwargs)
+    
+    def to(self, device):
+        """支持 .to() 调用（兼容性）"""
+        self.device = device
+        if self.loaded:
+            self.model = self.model.to(device)
+            self.mean = self.mean.to(device)
+            self.std = self.std.to(device)
         return self
     
-    def __exit__(self, *args):
-        self.unload()
+    def eval(self):
+        """支持 .eval() 调用（兼容性）"""
+        if self.loaded:
+            self.model.eval()
+        return self
 
 
 class LazyQwenEmotion:
     """
     延迟加载的 Qwen Emotion 包装器
     
-    只在需要时加载模型
+    完全替换 IndexTTS2 的 qwen_emo,实现延迟加载
     """
     
     def __init__(self, model_path: str):
@@ -226,25 +229,20 @@ class LazyQwenEmotion:
         self.loaded = False
     
     def ensure_loaded(self):
-        """确保模型已加载"""
+        """延迟加载 Qwen Emotion 模型（仅在需要时加载）"""
         if not self.loaded:
-            self._load()
-    
-    def _load(self):
-        """加载模型"""
-        print(">> Loading Qwen Emotion model (first use)...")
-        
-        from indextts.qwen_emo.qwen_emotion import QwenEmotion
-        
-        self.model = QwenEmotion(self.model_path)
-        self.loaded = True
-        print(">> Qwen Emotion loaded (~1.2GB)")
+            print(">> Loading Qwen Emotion model (first use)...")
+            from indextts.qwen_emo.qwen_emotion import QwenEmotion
+            self.model = QwenEmotion(self.model_path)
+            self.loaded = True
+            print(">> Qwen Emotion loaded (~1.2GB)")
     
     def inference(self, text: str) -> dict:
         """
         推理情感
         
         自动加载模型（如果未加载）
+        这个方法会被父类调用
         """
         self.ensure_loaded()
         return self.model.inference(text)
@@ -255,7 +253,8 @@ class LazyQwenEmotion:
             del self.model
             self.model = None
             gc.collect()
-            torch.mps.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
             self.loaded = False
             print(">> Qwen Emotion unloaded (~1.2GB freed)")
 
