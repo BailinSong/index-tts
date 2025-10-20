@@ -168,12 +168,12 @@ class IndexTTS2:
 
         # Post-init only for PyTorch models
         if not self.gpt_is_mlx:
-        if use_deepspeed:
-            try:
-                import deepspeed
-            except (ImportError, OSError, CalledProcessError) as e:
-                use_deepspeed = False
-                print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
+            if use_deepspeed:
+                try:
+                    import deepspeed
+                except (ImportError, OSError, CalledProcessError) as e:
+                    use_deepspeed = False
+                    print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
 
             self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
         else:
@@ -543,25 +543,25 @@ class IndexTTS2:
               use_emo_text=False, emo_text=None, use_random=False, interval_silence=200,
               verbose=False, max_text_tokens_per_segment=120, stream_return=False, more_segment_before=0, **generation_kwargs):
         try:
-        if stream_return:
-            return self.infer_generator(
-                spk_audio_prompt, text, output_path,
-                emo_audio_prompt, emo_alpha,
-                emo_vector,
-                use_emo_text, emo_text, use_random, interval_silence,
-                verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-            )
-        else:
-            try:
-                return list(self.infer_generator(
+            if stream_return:
+                return self.infer_generator(
                     spk_audio_prompt, text, output_path,
                     emo_audio_prompt, emo_alpha,
                     emo_vector,
                     use_emo_text, emo_text, use_random, interval_silence,
                     verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-                ))[0]
-            except IndexError:
-                return None
+                )
+            else:
+                try:
+                    return list(self.infer_generator(
+                        spk_audio_prompt, text, output_path,
+                        emo_audio_prompt, emo_alpha,
+                        emo_vector,
+                        use_emo_text, emo_text, use_random, interval_silence,
+                        verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
+                    ))[0]
+                except IndexError:
+                    return None
         finally:
             # 🔧 修复内存泄漏：每次推理后清理缓存
             import gc
@@ -646,7 +646,7 @@ class IndexTTS2:
                 self.cache_mel = None
                 self.cache_gpt_conditioning_latent_mlx = None  # 清除GPT Conditioning缓存
                 self.cache_gpt_conditioning_latent_torch = None
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
             audio,sr = self._load_and_cut_audio(spk_audio_prompt,15,verbose)
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
             audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
@@ -814,13 +814,13 @@ class IndexTTS2:
                             alpha=emo_alpha
                         )
                     else:
-                    emovec = self.gpt.merge_emovec(
-                        spk_cond_emb,
-                        emo_cond_emb,
-                        torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        alpha=emo_alpha
-                    )
+                        emovec = self.gpt.merge_emovec(
+                            spk_cond_emb,
+                            emo_cond_emb,
+                            torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            alpha=emo_alpha
+                        )
 
                     if emo_vector is not None:
                         emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
