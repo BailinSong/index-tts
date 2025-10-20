@@ -168,12 +168,12 @@ class IndexTTS2:
 
         # Post-init only for PyTorch models
         if not self.gpt_is_mlx:
-            if use_deepspeed:
-                try:
-                    import deepspeed
-                except (ImportError, OSError, CalledProcessError) as e:
-                    use_deepspeed = False
-                    print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
+        if use_deepspeed:
+            try:
+                import deepspeed
+            except (ImportError, OSError, CalledProcessError) as e:
+                use_deepspeed = False
+                print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
 
             self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
         else:
@@ -214,79 +214,13 @@ class IndexTTS2:
         self.mlx_s2mel_gpt_layer = None
         self.mlx_s2mel_length_regulator = None
         
+        # 禁用 S2MEL MLX 模块加载（实际使用中被注释，不需要加载）
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 2/4] Loading S2MEL with MLX optimization...")
-            mlx_s2mel_weights = self.mlx_cache.get_or_convert("s2mel", s2mel_path)
-            print(">> MLX S2MEL weights ready")
-            
-            # Create MLX versions of S2MEL modules
-            try:
-                from indextts.s2mel.mlx_modules import MLXGPTLayer, MLXInterpolateRegulator
-                
-                # GPT Layer (1280→1024)
-                print(">> Creating MLX GPT Layer...")
-                self.mlx_s2mel_gpt_layer = MLXGPTLayer()
-                # Load weights from cache (no 'models.' prefix in cache)
-                prefix = 'gpt_layer.'
-                if f'{prefix}0.weight' in mlx_s2mel_weights:
-                    self.mlx_s2mel_gpt_layer.layer1.weight = mlx_s2mel_weights[f'{prefix}0.weight']
-                    self.mlx_s2mel_gpt_layer.layer1.bias = mlx_s2mel_weights[f'{prefix}0.bias']
-                    self.mlx_s2mel_gpt_layer.layer2.weight = mlx_s2mel_weights[f'{prefix}1.weight']
-                    self.mlx_s2mel_gpt_layer.layer2.bias = mlx_s2mel_weights[f'{prefix}1.bias']
-                    self.mlx_s2mel_gpt_layer.layer3.weight = mlx_s2mel_weights[f'{prefix}2.weight']
-                    self.mlx_s2mel_gpt_layer.layer3.bias = mlx_s2mel_weights[f'{prefix}2.bias']
-                    print("   ✓ MLX GPT Layer weights loaded")
-                else:
-                    print("   ⚠️  GPT Layer weights not found in cache, will use PyTorch")
-                    self.mlx_s2mel_gpt_layer = None
-                
-                # Length Regulator
-                print(">> Creating MLX Length Regulator...")
-                self.mlx_s2mel_length_regulator = MLXInterpolateRegulator(
-                    channels=self.cfg.s2mel.length_regulator.channels,
-                    sampling_ratios=self.cfg.s2mel.length_regulator.sampling_ratios,
-                    is_discrete=self.cfg.s2mel.length_regulator.is_discrete,
-                    in_channels=self.cfg.s2mel.length_regulator.in_channels if hasattr(self.cfg.s2mel.length_regulator, "in_channels") else None,
-                    vector_quantize=self.cfg.s2mel.length_regulator.vector_quantize if hasattr(self.cfg.s2mel.length_regulator, "vector_quantize") else False,
-                    codebook_size=self.cfg.s2mel.length_regulator.content_codebook_size,
-                    n_codebooks=self.cfg.s2mel.length_regulator.n_codebooks if hasattr(self.cfg.s2mel.length_regulator, "n_codebooks") else 1,
-                    f0_condition=self.cfg.s2mel.length_regulator.f0_condition if hasattr(self.cfg.s2mel.length_regulator, "f0_condition") else False,
-                    n_f0_bins=self.cfg.s2mel.length_regulator.n_f0_bins if hasattr(self.cfg.s2mel.length_regulator, "n_f0_bins") else 512,
-                )
-                # Load Length Regulator weights (no 'models.' prefix in cache)
-                lr_prefix = 'length_regulator.'
-                lr_weights_found = False
-                # Check if weights exist and load them
-                if f'{lr_prefix}content_in_proj.weight' in mlx_s2mel_weights:
-                    self.mlx_s2mel_length_regulator.content_in_proj.weight = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.weight']
-                    self.mlx_s2mel_length_regulator.content_in_proj.bias = mlx_s2mel_weights[f'{lr_prefix}content_in_proj.bias']
-                    lr_weights_found = True
-                # Load model layers
-                layer_idx = 0
-                while f'{lr_prefix}model.{layer_idx}.weight' in mlx_s2mel_weights:
-                    if layer_idx < len(self.mlx_s2mel_length_regulator.model):
-                        mlx_layer = self.mlx_s2mel_length_regulator.model[layer_idx]
-                        if hasattr(mlx_layer, 'weight'):
-                            mlx_layer.weight = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.weight']
-                            if f'{lr_prefix}model.{layer_idx}.bias' in mlx_s2mel_weights:
-                                mlx_layer.bias = mlx_s2mel_weights[f'{lr_prefix}model.{layer_idx}.bias']
-                            lr_weights_found = True
-                    layer_idx += 1
-                
-                if lr_weights_found:
-                    print("   ✓ MLX Length Regulator weights loaded")
-                else:
-                    print("   ⚠️  Length Regulator weights not found in cache, will use PyTorch")
-                    self.mlx_s2mel_length_regulator = None
-                
-                if self.mlx_s2mel_gpt_layer or self.mlx_s2mel_length_regulator:
-                    print(">> ✓ S2MEL MLX modules ready")
-            except Exception as e:
-                print(f">> MLX S2MEL module creation failed: {e}")
-                import traceback
-                traceback.print_exc()
-                self.mlx_s2mel_gpt_layer = None
-                self.mlx_s2mel_length_regulator = None
+            print("\n>> [Model 2/4] S2MEL MLX optimization disabled (not used in current implementation)")
+            # MLX S2MEL 模块的加载被禁用，因为实际推理代码中这些模块被注释掉了
+            # 这样可以节省 ~400MB 内存和初始化时间
+            self.mlx_s2mel_gpt_layer = None
+            self.mlx_s2mel_length_regulator = None
         
         s2mel = MyModel(self.cfg.s2mel, use_gpt_latent=True)
         s2mel, _, _, _ = load_checkpoint2(
@@ -609,25 +543,25 @@ class IndexTTS2:
               use_emo_text=False, emo_text=None, use_random=False, interval_silence=200,
               verbose=False, max_text_tokens_per_segment=120, stream_return=False, more_segment_before=0, **generation_kwargs):
         try:
-            if stream_return:
-                return self.infer_generator(
+        if stream_return:
+            return self.infer_generator(
+                spk_audio_prompt, text, output_path,
+                emo_audio_prompt, emo_alpha,
+                emo_vector,
+                use_emo_text, emo_text, use_random, interval_silence,
+                verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
+            )
+        else:
+            try:
+                return list(self.infer_generator(
                     spk_audio_prompt, text, output_path,
                     emo_audio_prompt, emo_alpha,
                     emo_vector,
                     use_emo_text, emo_text, use_random, interval_silence,
                     verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-                )
-            else:
-                try:
-                    return list(self.infer_generator(
-                        spk_audio_prompt, text, output_path,
-                        emo_audio_prompt, emo_alpha,
-                        emo_vector,
-                        use_emo_text, emo_text, use_random, interval_silence,
-                        verbose, max_text_tokens_per_segment, stream_return, more_segment_before, **generation_kwargs
-                    ))[0]
-                except IndexError:
-                    return None
+                ))[0]
+            except IndexError:
+                return None
         finally:
             # 🔧 修复内存泄漏：每次推理后清理缓存
             import gc
@@ -644,7 +578,7 @@ class IndexTTS2:
                     mx.metal.clear_cache()
                 except:
                     pass
-    
+
     def infer_generator(self, spk_audio_prompt, text, output_path,
               emo_audio_prompt=None, emo_alpha=1.0,
               emo_vector=None,
@@ -680,11 +614,11 @@ class IndexTTS2:
             if emo_text is None:
                 emo_text = text  # use main text prompt
             # 延迟加载 Qwen Emotion 模型
-            self._ensure_qwen_loaded()
-            emo_dict = self.qwen_emo.inference(emo_text)
-            print(f"detected emotion vectors from text: {emo_dict}")
-            # convert ordered dict to list of vectors; the order is VERY important!
-            emo_vector = list(emo_dict.values())
+                self._ensure_qwen_loaded()
+                emo_dict = self.qwen_emo.inference(emo_text)
+                print(f"detected emotion vectors from text: {emo_dict}")
+                # convert ordered dict to list of vectors; the order is VERY important!
+                emo_vector = list(emo_dict.values())
 
         if emo_vector is not None:
             # we have emotion vectors; they can't be blended via alpha mixing
@@ -712,7 +646,7 @@ class IndexTTS2:
                 self.cache_mel = None
                 self.cache_gpt_conditioning_latent_mlx = None  # 清除GPT Conditioning缓存
                 self.cache_gpt_conditioning_latent_torch = None
-                torch.cuda.empty_cache()
+                    torch.cuda.empty_cache()
             audio,sr = self._load_and_cut_audio(spk_audio_prompt,15,verbose)
             audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
             audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
@@ -762,7 +696,7 @@ class IndexTTS2:
                                                                      ylens=ref_target_lengths,
                                                                      n_quantizers=3,
                                                                      f0=None)[0]
-
+            
             self.cache_spk_cond = spk_cond_emb
             self.cache_s2mel_style = style
             self.cache_s2mel_prompt = prompt_condition
@@ -865,7 +799,7 @@ class IndexTTS2:
                 # debug tokenizer
                 text_token_syms = self.tokenizer.convert_ids_to_tokens(text_tokens[0].tolist())
                 print("text_token_syms is same as segment tokens", text_token_syms == sent)
-
+            
             m_start_time = time.perf_counter()
             with torch.no_grad():
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
@@ -880,13 +814,13 @@ class IndexTTS2:
                             alpha=emo_alpha
                         )
                     else:
-                        emovec = self.gpt.merge_emovec(
-                            spk_cond_emb,
-                            emo_cond_emb,
-                            torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                            torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                            alpha=emo_alpha
-                        )
+                    emovec = self.gpt.merge_emovec(
+                        spk_cond_emb,
+                        emo_cond_emb,
+                        torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                        torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                        alpha=emo_alpha
+                    )
 
                     if emo_vector is not None:
                         emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
@@ -961,25 +895,25 @@ class IndexTTS2:
                         # 🔧 For debugging: force greedy decoding when num_beams=1 for deterministic output
                         # PyTorch's do_sample=True is not deterministic even with fixed seed
                         use_sampling_mode = False if num_beams == 1 else do_sample
-                        
-                        codes, speech_conditioning_latent = self.gpt.inference_speech(
-                            spk_cond_emb,
-                            text_tokens,
-                            emo_cond_emb,
-                            cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                            emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                            emo_vec=emovec,
+
+                    codes, speech_conditioning_latent = self.gpt.inference_speech(
+                        spk_cond_emb,
+                        text_tokens,
+                        emo_cond_emb,
+                        cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                        emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                        emo_vec=emovec,
                             do_sample=use_sampling_mode,
-                            top_p=top_p,
-                            top_k=top_k,
-                            temperature=temperature,
-                            num_return_sequences=autoregressive_batch_size,
-                            length_penalty=length_penalty,
-                            num_beams=num_beams,
-                            repetition_penalty=repetition_penalty,
-                            max_generate_length=max_mel_tokens,
-                            **generation_kwargs
-                        )
+                        top_p=top_p,
+                        top_k=top_k,
+                        temperature=temperature,
+                        num_return_sequences=autoregressive_batch_size,
+                        length_penalty=length_penalty,
+                        num_beams=num_beams,
+                        repetition_penalty=repetition_penalty,
+                        max_generate_length=max_mel_tokens,
+                        **generation_kwargs
+                    )
 
                 gpt_gen_time += time.perf_counter() - m_start_time
                 if not has_warned and (codes[:, -1] != self.stop_mel_token).any():
@@ -1032,18 +966,18 @@ class IndexTTS2:
                     else:
                         if self.gpt is None:
                             raise RuntimeError("PyTorch GPT not loaded.")
-                        latent = self.gpt(
-                            speech_conditioning_latent,
-                            text_tokens,
-                            torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
-                            codes,
-                            torch.tensor([codes.shape[-1]], device=text_tokens.device),
-                            emo_cond_emb,
-                            cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                            emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                            emo_vec=emovec,
-                            use_speed=use_speed,
-                        )
+                    latent = self.gpt(
+                        speech_conditioning_latent,
+                        text_tokens,
+                        torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
+                        codes,
+                        torch.tensor([codes.shape[-1]], device=text_tokens.device),
+                        emo_cond_emb,
+                        cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                        emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                        emo_vec=emovec,
+                        use_speed=use_speed,
+                    )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
                 dtype = None
@@ -1126,10 +1060,10 @@ class IndexTTS2:
                     t_cfm = time.perf_counter() - t0
                     vc_target = vc_target[:, :, ref_mel.size(-1):]
                     s2mel_time += time.perf_counter() - m_start_time
-                    
+
                     # Print detailed profiling
                     print(f">> S2MEL breakdown: gpt_layer={t_gpt_layer:.2f}s, vq2emb={t_vq2emb:.2f}s, prepare={t_prepare:.4f}s, length_reg={t_length_reg:.2f}s, cfm={t_cfm:.2f}s (steps={diffusion_steps})")
-
+                    
                     m_start_time = time.perf_counter()
                     wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)
                     print(wav.shape)
