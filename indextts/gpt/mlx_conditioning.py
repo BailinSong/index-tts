@@ -345,7 +345,9 @@ class MLXRelativeMultiHeadAttention(nn.Module):
 
 class MLXDepthwiseConv1d(nn.Module):
     """
-    Depthwise 1D Convolution for MLX.
+    Depthwise 1D Convolution using MLX's native Conv1d with groups.
+    
+    This matches PyTorch's depthwise convolution: Conv1d with groups=channels.
     Each input channel is convolved with its own kernel.
     """
     
@@ -355,37 +357,45 @@ class MLXDepthwiseConv1d(nn.Module):
         self.kernel_size = kernel_size
         self.padding = padding
         
-        # Weight: one kernel per channel (channels, kernel_size)
-        self.weight = mx.random.normal((channels, kernel_size)) * 0.02
-        self.bias = mx.zeros((channels,))
+        # ✅ Use MLX's native Conv1d with groups=channels for depthwise convolution
+        # This is much more efficient and numerically accurate than manual implementation
+        self.conv = nn.Conv1d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=padding,
+            groups=channels,  # This makes it depthwise!
+            bias=True
+        )
+    
+    @property
+    def weight(self):
+        """Expose weight for loading from checkpoint"""
+        return self.conv.weight
+    
+    @weight.setter
+    def weight(self, value):
+        """Set weight, handling format conversion if needed"""
+        self.conv.weight = value
+    
+    @property
+    def bias(self):
+        return self.conv.bias
+    
+    @bias.setter
+    def bias(self, value):
+        self.conv.bias = value
     
     def __call__(self, x):
         """
         Args:
-            x: (batch, seq, channels)
+            x: (batch, seq, channels) - MLX format
         Returns:
-            out: (batch, seq_out, channels)
+            out: (batch, seq, channels)
         """
-        batch, seq, channels = x.shape
-        
-        # Apply padding
-        if self.padding > 0:
-            pad_config = [(0, 0), (self.padding, self.padding), (0, 0)]
-            x = mx.pad(x, pad_config)
-            seq = seq + 2 * self.padding
-        
-        seq_out = seq - self.kernel_size + 1
-        
-        # Sliding window convolution
-        outputs = []
-        for i in range(seq_out):
-            window = x[:, i:i+self.kernel_size, :]  # (batch, kernel_size, channels)
-            weight_broadcast = self.weight.T.reshape(1, self.kernel_size, channels)
-            out_i = mx.sum(window * weight_broadcast, axis=1)  # (batch, channels)
-            outputs.append(out_i)
-        
-        out = mx.stack(outputs, axis=1)  # (batch, seq_out, channels)
-        return out + self.bias
+        # MLX Conv1d expects (batch, seq, in_channels) which is what we have
+        return self.conv(x)
 
 
 class MLXConvolutionModule(nn.Module):
@@ -448,7 +458,19 @@ class MLXConvolutionModule(nn.Module):
         
         # Apply mask if provided
         if mask_pad is not None:
-            mask_squeezed = mask_pad.squeeze(1).squeeze(1)  # (batch, seq_len)
+            # mask_pad could be (batch, 1, 1, seq) or (batch, 1, seq) depending on source
+            # Squeeze all size-1 dimensions to get (batch, seq)
+            mask_squeezed = mask_pad
+            while len(mask_squeezed.shape) > 2:
+                # Find and squeeze size-1 dimensions
+                for i in range(1, len(mask_squeezed.shape)):
+                    if mask_squeezed.shape[i] == 1:
+                        mask_squeezed = mask_squeezed.squeeze(i)
+                        break
+                else:
+                    break  # No more size-1 dims
+            
+            # mask_squeezed should now be (batch, seq_len)
             mask_expanded = mask_squeezed.reshape(mask_squeezed.shape[0], mask_squeezed.shape[1], 1)
             x = x * mask_expanded
         
@@ -634,7 +656,18 @@ class MLXConformerEncoder(nn.Module):
         # Final normalization (matches PyTorch after_norm)
         x = self.after_norm(x)
         
-        return x, mask
+        # Return encoded features and mask
+        # For speaker conditioning, mask_pad remains None (not used)
+        # For emotion conditioning, we need to return the actual mask
+        # PyTorch ConformerEncoder returns (encoded, mask) where mask shape is (batch, 1, seq_len)
+        if mask_pad is not None:
+            # Reshape mask_pad from (batch, 1, 1, seq_len) to (batch, 1, seq_len) for compatibility
+            return_mask = mask_pad.squeeze(2)  # (batch, 1, seq_len)
+        else:
+            # For speaker conditioning (32 latents), no mask is typically returned
+            return_mask = None
+        
+        return x, return_mask
 
 
 # ============================================================================
@@ -668,15 +701,24 @@ class MLXConditioningModule(nn.Module):
         model_dim: int = 1280,
         num_latents: int = 32,
         conformer_layers: int = 6,
-        perceiver_depth: int = 2
+        conformer_heads: int = 8,      # ← NEW: attention heads
+        conformer_ff_mult: int = 4,    # ← NEW: feed-forward multiplier
+        perceiver_depth: int = 2,
+        perceiver_heads: int = 8,      # ← NEW: perceiver attention heads
+        perceiver_ff_mult: int = 4     # ← NEW: perceiver feed-forward multiplier
     ):
         super().__init__()
+        
+        # Store num_latents for mask processing
+        self.num_latents = num_latents
         
         # Conformer: 1024 → 512 (matches PyTorch)
         self.conformer = MLXConformerEncoder(
             input_dim=input_dim,
             output_dim=conformer_dim,  # 512
-            num_layers=conformer_layers
+            num_layers=conformer_layers,
+            num_heads=conformer_heads,  # Pass from config
+            ff_mult=conformer_ff_mult   # Pass from config
         )
         
         # Perceiver: 512 → 1280 (with proj_context)
@@ -684,7 +726,9 @@ class MLXConditioningModule(nn.Module):
             dim=model_dim,  # 1280
             depth=perceiver_depth,
             dim_context=conformer_dim,  # 512 from Conformer
-            num_latents=num_latents
+            num_latents=num_latents,
+            heads=perceiver_heads,      # Pass from config
+            ff_mult=perceiver_ff_mult   # Pass from config
         )
     
     def __call__(self, x, lengths=None):
@@ -696,11 +740,26 @@ class MLXConditioningModule(nn.Module):
         Returns:
             Conditioning latents (batch, num_latents, model_dim)
         """
+        import mlx.core as mx
+        
         # Conformer encoding
         x, mask = self.conformer(x, lengths)
         
-        # Perceiver resampling
-        latents = self.perceiver(x, mask)
+        # Process mask for perceiver (matches PyTorch cond_mask_pad)
+        # PyTorch: conds_mask = self.cond_mask_pad(mask.squeeze(1))
+        # cond_mask_pad = nn.ConstantPad1d((num_latents, 0), True)
+        if mask is not None:
+            mask_squeezed = mask.squeeze(1) if len(mask.shape) > 2 and mask.shape[1] == 1 else mask
+            # Add num_latents True values at the beginning
+            padding = mx.ones((mask_squeezed.shape[0], self.num_latents), dtype=mx.bool_)
+            conds_mask = mx.concatenate([padding, mask_squeezed], axis=1)
+        else:
+            # If no mask, create one for all positions
+            batch_size, seq_len, _ = x.shape
+            conds_mask = mx.ones((batch_size, self.num_latents + seq_len), dtype=mx.bool_)
+        
+        # Perceiver resampling with processed mask
+        latents = self.perceiver(x, conds_mask)
         
         return latents
 

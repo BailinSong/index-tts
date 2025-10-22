@@ -35,6 +35,53 @@ class MLXEmbedding(nn.Module):
         return self.weight[indices]
 
 
+class MLXLearnedPositionEmbeddings(nn.Module):
+    """
+    Learned Position Embeddings for MLX.
+    Matches PyTorch LearnedPositionEmbeddings behavior.
+    """
+    
+    def __init__(self, seq_len: int, model_dim: int, init=0.02):
+        super().__init__()
+        # Create embedding weight
+        self.emb = mx.random.normal((seq_len, model_dim)) * init
+        self.seq_len = seq_len
+        self.model_dim = model_dim
+    
+    def __call__(self, x):
+        """
+        Args:
+            x: Input tensor (for getting sequence length from shape)
+        
+        Returns:
+            Position embeddings for the sequence
+        """
+        import torch
+        import mlx.core as mx
+        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        
+        # Get sequence length
+        if isinstance(x, torch.Tensor):
+            sl = x.shape[1]
+            device = x.device
+            # Generate position indices like PyTorch: arange(0, sl)
+            positions = mx.arange(sl)
+            pos_emb = self.emb[positions]
+            # Return as PyTorch tensor
+            return mlx_to_torch(pos_emb, device=device)
+        else:
+            # MLX array
+            sl = x.shape[1]
+            positions = mx.arange(sl)
+            return self.emb[positions]
+    
+    def get_fixed_embedding(self, ind, dev):
+        """Get embedding for a specific index."""
+        import torch
+        from indextts.utils.mlx_utils import mlx_to_torch
+        return mlx_to_torch(self.emb[ind:ind+1], device=dev).unsqueeze(0)
+
+
 class MLXMultiHeadAttention(nn.Module):
     """
     Multi-Head Attention for MLX.
@@ -231,14 +278,34 @@ class UnifiedVoiceMLX(nn.Module):
             )
             
             # Emotion conditioning (1 latent for emotion vector)
-            self.emo_conditioning_module = MLXConditioningModule(
-                input_dim=1024,         # Emotion embedding dimension
-                conformer_dim=512,      # Conformer output (matches PyTorch)
-                model_dim=1024,         # Keep 1024 for emovec_layer input
-                num_latents=1,          # Output 1 latent for emotion
-                conformer_layers=6,     # 6 layers (matches PyTorch)
-                perceiver_depth=2       # 2 layers (matches PyTorch)
-            )
+            # Get emotion conformer config from kwargs
+            emo_condition_module = kwargs.get('emo_condition_module', None)
+            if emo_condition_module is not None:
+                emo_cfg = emo_condition_module
+                self.emo_conditioning_module = MLXConditioningModule(
+                    input_dim=1024,                          # Emotion embedding dimension
+                    conformer_dim=emo_cfg['output_size'],   # 512 (conformer output)
+                    model_dim=1024,                          # Keep 1024 for emovec_layer input
+                    num_latents=1,                           # Output 1 latent for emotion
+                    conformer_layers=emo_cfg['num_blocks'], # From config (4)
+                    conformer_heads=emo_cfg['attention_heads'],  # From config (4)
+                    conformer_ff_mult=emo_cfg['linear_units'] // emo_cfg['output_size'],  # 1024/512 = 2
+                    perceiver_depth=2,                       # 2 layers (matches PyTorch)
+                    perceiver_heads=emo_cfg['attention_heads'],  # From config (4)
+                    perceiver_ff_mult=emo_cfg['perceiver_mult']  # From config (2)
+                )
+            else:
+                # Fallback to defaults
+                self.emo_conditioning_module = MLXConditioningModule(
+                    input_dim=1024,
+                    conformer_dim=512,
+                    model_dim=1024,
+                    num_latents=1,
+                    conformer_layers=4,      # Default
+                    conformer_heads=4,       # Default
+                    conformer_ff_mult=2,     # Default
+                    perceiver_depth=2
+                )
             
             # Emotion projection layers (matches PyTorch)
             self.emovec_layer = nn.Linear(1024, model_dim)  # 1024 → 1280
@@ -273,7 +340,8 @@ class UnifiedVoiceMLX(nn.Module):
         max_mel_tokens = kwargs.get('max_mel_tokens', 1815)
         max_text_tokens = kwargs.get('max_text_tokens', 600)
         self.mel_pos_embedding = MLXEmbedding(max_mel_tokens, model_dim)
-        self.text_pos_embedding = MLXEmbedding(max_text_tokens + 2, model_dim)
+        # Use MLXLearnedPositionEmbeddings to match PyTorch LearnedPositionEmbeddings behavior
+        self.text_pos_embedding = MLXLearnedPositionEmbeddings(max_text_tokens + 2, model_dim, init=0.02)
         
         # Conditioning parameters
         self.cond_num = kwargs.get('condition_num_latent', 32)
@@ -331,7 +399,7 @@ class UnifiedVoiceMLX(nn.Module):
             'text_embedding.weight': ('text_embedding', 'weight'),
             'mel_embedding.weight': ('mel_embedding', 'weight'),
             'mel_pos_embedding.emb.weight': ('mel_pos_embedding', 'weight'),
-            'text_pos_embedding.emb.weight': ('text_pos_embedding', 'weight'),
+            'text_pos_embedding.emb.weight': ('text_pos_embedding', 'emb'),  # Use 'emb' for MLXLearnedPositionEmbeddings
             'mel_head.weight': ('mel_head', 'weight'),
             'mel_head.bias': ('mel_head', 'bias'),
             'text_head.weight': ('text_head', 'weight'),
@@ -584,17 +652,21 @@ class UnifiedVoiceMLX(nn.Module):
         loaded = 0
         conformer = self.conditioning_module.conformer
         
-        # ✅ FIX: Load Conv2d Subsampling weights
-        # Conv2d: conditioning_encoder.embed.conv.0.weight (512, 1, 3, 3)
+        # ✅ FIX: Load Conv2d Subsampling weights with format conversion
+        # Conv2d: conditioning_encoder.embed.conv.0.weight
         if 'conditioning_encoder.embed.conv.0.weight' in weights:
-            # PyTorch: (out_channels=512, in_channels=1, H=3, W=3)
-            # MLX: same shape
-            conformer.subsampling.conv.weight = weights['conditioning_encoder.embed.conv.0.weight']
+            # PyTorch format: (out_channels=512, in_channels=1, H=3, W=3)
+            # MLX format: (out_channels=512, H=3, W=3, in_channels=1)
+            # Need to permute: (O, I, H, W) → (O, H, W, I)
+            pytorch_weight = weights['conditioning_encoder.embed.conv.0.weight']
+            # Transpose from (512, 1, 3, 3) to (512, 3, 3, 1)
+            mlx_weight = pytorch_weight.transpose(0, 2, 3, 1)
+            conformer.subsampling.conv.conv.weight = mlx_weight
             loaded += 1
         
         if 'conditioning_encoder.embed.conv.0.bias' in weights:
-            # PyTorch: (512,)
-            conformer.subsampling.conv.bias = weights['conditioning_encoder.embed.conv.0.bias']
+            # Bias is the same format: (512,)
+            conformer.subsampling.conv.conv.bias = weights['conditioning_encoder.embed.conv.0.bias']
             loaded += 1
         
         # Linear projection after Conv2d: conditioning_encoder.embed.out.0
@@ -614,8 +686,8 @@ class UnifiedVoiceMLX(nn.Module):
             conformer.pos_encoding = pe.squeeze(0)[:1000]  # Take first 1000, remove batch dim
             loaded += 1
         
-        # Conformer blocks (6 layers)
-        for layer_idx in range(6):
+        # Conformer blocks (dynamic number of layers)
+        for layer_idx in range(len(conformer.blocks)):
             block = conformer.blocks[layer_idx]
             prefix = f"conditioning_encoder.encoders.{layer_idx}"
             
@@ -681,11 +753,13 @@ class UnifiedVoiceMLX(nn.Module):
                 loaded += 1
             
             if f"{prefix}.conv_module.depthwise_conv.weight" in weights:
+                # PyTorch format: (out_channels, in_channels//groups, kernel_size) = (512, 1, 15)
+                # MLX Conv1d format: (out_channels, kernel_size, in_channels//groups) = (512, 15, 1)
                 w = weights[f"{prefix}.conv_module.depthwise_conv.weight"]  # (512, 1, 15)
-                block.conv.depthwise.weight = w.squeeze(1)  # Remove middle dim: (512, 15)
+                block.conv.depthwise.conv.weight = w.transpose(0, 2, 1)  # (512, 15, 1)
                 loaded += 1
             if f"{prefix}.conv_module.depthwise_conv.bias" in weights:
-                block.conv.depthwise.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
+                block.conv.depthwise.conv.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
                 loaded += 1
             
             if f"{prefix}.conv_module.pointwise_conv2.weight" in weights:
@@ -822,10 +896,14 @@ class UnifiedVoiceMLX(nn.Module):
         
         # Conv2d Subsampling
         if 'emo_conditioning_encoder.embed.conv.0.weight' in weights:
-            conformer.subsampling.conv.weight = weights['emo_conditioning_encoder.embed.conv.0.weight']
+            # PyTorch format: (out_channels, in_channels, H, W) = (512, 1, 3, 3)
+            # MLX format: (out_channels, H, W, in_channels) = (512, 3, 3, 1)
+            pytorch_weight = weights['emo_conditioning_encoder.embed.conv.0.weight']
+            mlx_weight = pytorch_weight.transpose(0, 2, 3, 1)
+            conformer.subsampling.conv.conv.weight = mlx_weight
             loaded += 1
         if 'emo_conditioning_encoder.embed.conv.0.bias' in weights:
-            conformer.subsampling.conv.bias = weights['emo_conditioning_encoder.embed.conv.0.bias']
+            conformer.subsampling.conv.conv.bias = weights['emo_conditioning_encoder.embed.conv.0.bias']
             loaded += 1
         
         # Linear projection
@@ -842,8 +920,8 @@ class UnifiedVoiceMLX(nn.Module):
             conformer.pos_encoding = pe.squeeze(0)[:1000]
             loaded += 1
         
-        # Conformer blocks (6 layers)
-        for layer_idx in range(6):
+        # Conformer blocks (dynamic number of layers)
+        for layer_idx in range(len(conformer.blocks)):
             block = conformer.blocks[layer_idx]
             prefix = f"emo_conditioning_encoder.encoders.{layer_idx}"
             
@@ -906,10 +984,13 @@ class UnifiedVoiceMLX(nn.Module):
                 block.conv.pointwise1.bias = weights[f"{prefix}.conv_module.pointwise_conv1.bias"]
                 loaded += 1
             if f"{prefix}.conv_module.depthwise_conv.weight" in weights:
-                block.conv.depthwise.weight = weights[f"{prefix}.conv_module.depthwise_conv.weight"]
+                # PyTorch format: (out_channels, in_channels//groups, kernel_size) = (512, 1, 15)
+                # MLX Conv1d format: (out_channels, kernel_size, in_channels//groups) = (512, 15, 1)
+                w = weights[f"{prefix}.conv_module.depthwise_conv.weight"]
+                block.conv.depthwise.conv.weight = w.transpose(0, 2, 1)
                 loaded += 1
             if f"{prefix}.conv_module.depthwise_conv.bias" in weights:
-                block.conv.depthwise.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
+                block.conv.depthwise.conv.bias = weights[f"{prefix}.conv_module.depthwise_conv.bias"]
                 loaded += 1
             if f"{prefix}.conv_module.pointwise_conv2.weight" in weights:
                 block.conv.pointwise2.weight = weights[f"{prefix}.conv_module.pointwise_conv2.weight"]
@@ -1017,14 +1098,14 @@ class UnifiedVoiceMLX(nn.Module):
         
         
         text_seq_len = text_input_processed.shape[0]
-        max_text_pos = self.text_pos_embedding.weight.shape[0]
+        max_text_pos = self.text_pos_embedding.emb.shape[0]
         if text_seq_len > max_text_pos:
             text_seq_len = max_text_pos
             text_input_processed = text_input_processed[:text_seq_len]
         
         # Get text embeddings
         text_emb = self.text_embedding(text_input_processed.reshape(1, -1))
-        text_pos_emb = mx.stack([self.text_pos_embedding.weight[j] for j in range(text_seq_len)], axis=0)
+        text_pos_emb = mx.stack([self.text_pos_embedding.emb[j] for j in range(text_seq_len)], axis=0)
         text_emb = text_emb[0] + text_pos_emb
         text_emb = text_emb.reshape(1, -1, self.model_dim)
         
@@ -1522,7 +1603,7 @@ class UnifiedVoiceMLX(nn.Module):
             
             # 3. Get text embeddings + positional embeddings
             text_seq_len = text_input_processed.shape[0]
-            max_text_pos = self.text_pos_embedding.weight.shape[0]
+            max_text_pos = self.text_pos_embedding.emb.shape[0]
             
             # 检查是否越界
             if text_seq_len > max_text_pos:
@@ -1531,7 +1612,7 @@ class UnifiedVoiceMLX(nn.Module):
                 text_input_processed = text_input_processed[:text_seq_len]
             
             text_emb = self.text_embedding(text_input_processed.reshape(1, -1))  # (1, T, D)
-            text_pos_emb = mx.stack([self.text_pos_embedding.weight[j] for j in range(text_seq_len)], axis=0)  # (T, D)
+            text_pos_emb = mx.stack([self.text_pos_embedding.emb[j] for j in range(text_seq_len)], axis=0)  # (T, D)
             text_emb = text_emb[0] + text_pos_emb  # (T, D)
             
             processed_text_embs.append(text_emb)
@@ -1842,27 +1923,40 @@ class UnifiedVoiceMLX(nn.Module):
         # Convert to MLX
         speech_mlx = torch_to_mlx(speech_conditioning_input)  # (b, time, 1024)
         
-        # Project from 1024 to model_dim
-        projected = self.cond_projection(speech_mlx)  # (b, time, model_dim)
+        # Convert cond_mel_lengths to MLX format
+        lengths_mlx = None
+        if cond_mel_lengths is not None:
+            lengths_mlx = torch_to_mlx(cond_mel_lengths)
         
-        # Simplified PerceiverResampler: use pooling to downsample
-        batch_size, seq_len, _ = projected.shape
-        num_tokens = self.cond_num
-        
-        if seq_len >= num_tokens:
-            # Average pooling to fixed number of tokens
-            pool_size = seq_len / num_tokens
-            conds_list = []
-            for i in range(num_tokens):
-                start = int(i * pool_size)
-                end = int((i + 1) * pool_size)
-                if start < seq_len:
-                    pooled = mx.mean(projected[:, start:end, :], axis=1, keepdims=True)
-                    conds_list.append(pooled)
-            conds = mx.concatenate(conds_list, axis=1)
+        # 🔥 CRITICAL: Use full MLX conditioning pipeline (Conformer + Perceiver)
+        # This ensures identical processing to PyTorch version
+        if self.use_mlx_conditioning and self.conditioning_module is not None:
+            # Use native MLX Conformer + Perceiver (matches PyTorch architecture)
+            conds = self.conditioning_module(speech_mlx, lengths_mlx)  # (b, 32, 1280)
+            print(f">> [MLX Conditioning] Using full Conformer+Perceiver pipeline for consistency")
         else:
-            # Pad if too short
-            conds = projected
+            # Fallback: simplified projection + pooling (legacy)
+            projected = self.cond_projection(speech_mlx)  # (b, time, model_dim)
+            
+            # Simplified PerceiverResampler: use pooling to downsample
+            batch_size, seq_len, _ = projected.shape
+            num_tokens = self.cond_num
+            
+            if seq_len >= num_tokens:
+                # Average pooling to fixed number of tokens
+                pool_size = seq_len / num_tokens
+                conds_list = []
+                for i in range(num_tokens):
+                    start = int(i * pool_size)
+                    end = int((i + 1) * pool_size)
+                    if start < seq_len:
+                        pooled = mx.mean(projected[:, start:end, :], axis=1, keepdims=True)
+                        conds_list.append(pooled)
+                conds = mx.concatenate(conds_list, axis=1)
+            else:
+                # Pad if too short
+                conds = projected
+            print(f">> [MLX Conditioning] Using simplified pooling (fallback)")
         
         # Return as PyTorch
         return mlx_to_torch(conds, device='mps')
@@ -1880,10 +1974,12 @@ class UnifiedVoiceMLX(nn.Module):
         Returns:
             Emotion vector (b, 1024) PyTorch tensor (before emovec_layer projection)
         """
+        # 🔥 Use pure MLX implementation with fixed Conv2d
         if not self.use_mlx_conditioning or self.emo_conditioning_module is None:
             raise RuntimeError("MLX emotion conditioning not enabled")
         
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+        import mlx.core as mx
         
         # Ensure correct shape (b, time, 1024)
         if speech_conditioning_input.shape[-1] != 1024:
@@ -1891,13 +1987,40 @@ class UnifiedVoiceMLX(nn.Module):
             speech_conditioning_input = speech_conditioning_input.transpose(1, 2)
         
         # Convert to MLX
-        speech_mlx = torch_to_mlx(speech_conditioning_input)  # (b, time, 1024)
+        speech_mlx = torch_to_mlx(speech_conditioning_input.cpu())  # (b, time, 1024)
+        cond_lengths_mlx = torch_to_mlx(cond_mel_lengths.cpu()) if cond_mel_lengths is not None else None
         
-        # Use dedicated emotion conditioning module (Conformer + Perceiver)
-        # Output: (b, 1, 1024) - 1 latent with 1024 dimensions
-        emo_latent = self.emo_conditioning_module(speech_mlx, None)
+        # 🔥 CRITICAL: Match PyTorch step-by-step processing exactly
+        # Step 1: Conformer encoder (matches PyTorch emo_conditioning_encoder)
+        conformer_result = self.emo_conditioning_module.conformer(speech_mlx, cond_lengths_mlx)
+        if isinstance(conformer_result, tuple):
+            conformer_out, mask = conformer_result
+        else:
+            conformer_out = conformer_result
+            # Create dummy mask if not returned
+            batch_size_temp, seq_len_temp, _ = conformer_out.shape
+            mask = mx.ones((batch_size_temp, 1, seq_len_temp), dtype=mx.bool_)
         
-        # Squeeze to (b, 1024)
+        # Step 2: Mask processing (matches PyTorch emo_cond_mask_pad)
+        # PyTorch: conds_mask = self.emo_cond_mask_pad(mask.squeeze(1))
+        # ConstantPad1d((1, 0), True) adds one True value at the beginning
+        if mask is not None:
+            mask_squeezed = mask.squeeze(1) if len(mask.shape) > 2 and mask.shape[1] == 1 else mask
+            # Add padding: one True at the beginning
+            conds_mask = mx.concatenate([
+                mx.ones((mask_squeezed.shape[0], 1), dtype=mx.bool_),
+                mask_squeezed
+            ], axis=1)
+        else:
+            # Fallback if no mask - create appropriate mask for emotion conditioning
+            batch_size_fb, seq_len_fb, _ = conformer_out.shape
+            # For emotion: 1 latent + seq_len positions, all True
+            conds_mask = mx.ones((batch_size_fb, seq_len_fb + 1), dtype=mx.bool_)
+        
+        # Step 3: Perceiver encoder (matches PyTorch emo_perceiver_encoder)
+        emo_latent = self.emo_conditioning_module.perceiver(conformer_out, conds_mask)
+        
+        # Step 4: Squeeze to (b, 1024) (matches PyTorch return conds.squeeze(1))
         emo_cond = mx.squeeze(emo_latent, axis=1)  # (b, 1024)
         
         # Return as PyTorch
