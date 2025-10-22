@@ -12,23 +12,27 @@ def mlx_pad_reflect_1d(x, padding_left, padding_right):
     MLX实现的reflect padding for 1D  
     x: (batch, seq_len, channels)
     
-    注意: MLX不支持'reflect' mode，需要手动实现
+    PyTorch reflect: 镜像反射但不包括边界本身
+    例如: [1,2,3,4,5] pad(2,2) -> [3,2, 1,2,3,4,5, 4,3]
     """
     if padding_left == 0 and padding_right == 0:
         return x
     
     batch, seq_len, channels = x.shape
     
-    # 手动实现reflect padding
-    # Reflect: [3,2,1] + [1,2,3,4,5] + [5,4,3]
+    # 左侧reflect padding
     if padding_left > 0:
-        # 取前padding_left个元素并反转
-        pad_size = min(padding_left, seq_len - 1)  # 不能超过seq_len-1
+        pad_size = min(padding_left, seq_len - 1)
         if pad_size > 0:
-            left_pad = x[:, 1:pad_size+1, :]  # Skip first element
-            left_pad = left_pad[:, ::-1, :]  # Reverse
+            # PyTorch reflect: 取索引[1, 2, ..., pad_size]并反转
+            # 对于[1,2,3,4,5] pad_size=2: 取索引[1,2]的值[2,3]反转得[3,2]
+            left_slice = x[:, 1:pad_size+1, :]  # Shape: (batch, pad_size, channels)
+            # 手动反转：构建反转索引 [pad_size-1, pad_size-2, ..., 0]
+            reverse_indices = mx.arange(pad_size - 1, -1, -1)
+            left_pad = left_slice[:, reverse_indices, :]
+            
             if pad_size < padding_left:
-                # 需要额外padding，使用edge
+                # 不够的用edge
                 extra = padding_left - pad_size
                 edge_pad = mx.broadcast_to(x[:, 0:1, :], (batch, extra, channels))
                 left_pad = mx.concatenate([edge_pad, left_pad], axis=1)
@@ -37,21 +41,28 @@ def mlx_pad_reflect_1d(x, padding_left, padding_right):
         
         x = mx.concatenate([left_pad, x], axis=1)
     
+    # 右侧reflect padding
     if padding_right > 0:
-        current_seq = x.shape[1]
-        original_end = seq_len + padding_left - 1  # 原始序列的最后一个元素位置
-        pad_size = min(padding_right, seq_len - 1)
+        # 注意：此时x已经被左padding扩展了
+        # 原始序列的最后一个索引
+        original_end_idx = seq_len + (padding_left if padding_left > 0 else 0) - 1
         
+        pad_size = min(padding_right, seq_len - 1)
         if pad_size > 0:
-            # 取后padding_right个元素并反转
-            right_pad = x[:, original_end-pad_size:original_end, :]  # 倒数几个元素
-            right_pad = right_pad[:, ::-1, :]  # Reverse
+            # PyTorch reflect: 取倒数第[2, 3, ..., pad_size+1]个元素并反转
+            # 对于[..., 8,9,10] pad_size=2: 取索引[-2,-3]相对于original_end的值[9,8]反转得[9,8]...不对
+            # 应该是: 取[original_end-pad_size:original_end]即[8,9]反转得[9,8]
+            right_slice = x[:, original_end_idx-pad_size:original_end_idx, :]
+            # 手动反转
+            reverse_indices = mx.arange(pad_size - 1, -1, -1)
+            right_pad = right_slice[:, reverse_indices, :]
+            
             if pad_size < padding_right:
                 extra = padding_right - pad_size
-                edge_pad = mx.broadcast_to(x[:, original_end:original_end+1, :], (batch, extra, channels))
+                edge_pad = mx.broadcast_to(x[:, original_end_idx:original_end_idx+1, :], (batch, extra, channels))
                 right_pad = mx.concatenate([right_pad, edge_pad], axis=1)
         else:
-            right_pad = mx.broadcast_to(x[:, original_end:original_end+1, :], (batch, padding_right, channels))
+            right_pad = mx.broadcast_to(x[:, original_end_idx:original_end_idx+1, :], (batch, padding_right, channels))
         
         x = mx.concatenate([x, right_pad], axis=1)
     

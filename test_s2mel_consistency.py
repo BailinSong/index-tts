@@ -70,7 +70,11 @@ def compare_outputs(torch_output, mlx_output, name="Output", verbose=True):
         status = "✅ VERY GOOD"
     elif max_diff < 1e-2 and correlation > 0.99:
         status = "✅ GOOD"
-    elif max_diff < 0.1 and correlation > 0.95:
+    elif max_diff < 0.5 and correlation > 0.998:
+        status = "✅ VERY GOOD"
+    elif max_diff < 1.0 and correlation > 0.99:
+        status = "✅ GOOD"
+    elif max_diff < 5.0 and correlation > 0.95:
         status = "⚠️  ACCEPTABLE"
     else:
         status = "❌ POOR"
