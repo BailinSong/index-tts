@@ -146,8 +146,10 @@ class MLXFinalLayer(nn.Module):
         Returns: (batch, seq_len, out_channels)
         """
         # AdaLN modulation
-        ada_out = self.adaLN_0(c)  # (batch, 2*hidden_size)
-        ada_out = nn.silu(ada_out)
+        # Note: PyTorch uses Sequential(SiLU(), Linear())
+        # So we need to apply SiLU BEFORE adaLN_0, not after!
+        c_activated = nn.silu(c)  # Apply SiLU first
+        ada_out = self.adaLN_0(c_activated)  # Then Linear
         
         # Split into shift and scale
         shift = ada_out[:, :self.hidden_size]
