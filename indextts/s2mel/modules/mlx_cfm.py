@@ -296,7 +296,13 @@ class MLXDiT(nn.Module):
         t_emb = self.t_embedder(t)  # (batch, hidden_dim)
         
         # Project conditioning
-        cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
+        if self.content_type == 'discrete':
+            # Cond is already semantic embeddings from quantizer
+            # Need to transpose from (batch, content_dim, seq_len) to (batch, seq_len, content_dim)
+            cond_t = cond.transpose(0, 2, 1)  # (batch, seq_len, content_dim)
+            cond_proj = cond_t  # Keep as is (will be merged later)
+        else:
+            cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
         
         # Transpose x and prompt_x to (batch, seq_len, channels)
         x_t = x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
@@ -589,38 +595,27 @@ class MLXCFM(nn.Module):
     
     def extract_weights_for_cache(self):
         """
-        Extract all MLX weights from CFM for caching.
+        Extract all MLX weights from CFM for caching using model's parameters() method.
         
         Returns:
             dict of {name: mx.array} suitable for mx.savez()
         """
-        weights = {}
+        def flatten_parameters(params, prefix=""):
+            """Recursively flatten nested parameter dict"""
+            flat = {}
+            for name, value in params.items():
+                full_name = f"{prefix}.{name}" if prefix else name
+                if isinstance(value, dict):
+                    # Recurse into nested dict
+                    flat.update(flatten_parameters(value, full_name))
+                elif isinstance(value, mx.array):
+                    # Leaf parameter
+                    flat[full_name] = value
+            return flat
         
-        def extract_from_module(module, prefix=""):
-            """Recursively extract weights"""
-            for name in dir(module):
-                if name.startswith('_'):
-                    continue
-                
-                try:
-                    attr = getattr(module, name)
-                    full_name = f"{prefix}.{name}" if prefix else name
-                    
-                    if isinstance(attr, mx.array):
-                        weights[full_name] = attr
-                    elif isinstance(attr, list):
-                        # Handle lists of layers
-                        for i, item in enumerate(attr):
-                            if hasattr(item, '__dict__'):
-                                extract_from_module(item, f"{full_name}.{i}")
-                    elif hasattr(attr, '__dict__') and not callable(attr):
-                        # Recursively extract from sub-modules
-                        extract_from_module(attr, full_name)
-                except:
-                    pass
-        
-        # Extract from estimator (DiT)
-        extract_from_module(self.estimator, "estimator")
+        # Get all parameters from estimator (DiT)
+        params = self.estimator.parameters()
+        weights = flatten_parameters(params, "estimator")
         
         print(f">> Extracted {len(weights)} weight arrays for caching")
         return weights
@@ -635,32 +630,36 @@ class MLXCFM(nn.Module):
         Returns:
             Number of weights loaded
         """
-        loaded = 0
-        
-        # Load into estimator
-        for key, value in cache_dict.items():
-            if key.startswith("estimator."):
-                # Navigate to the nested attribute
-                parts = key.split('.')
-                obj = self.estimator
+        # Reconstruct nested parameter dict
+        def unflatten_parameters(flat_dict, prefix="estimator"):
+            """Reconstruct nested dict from flattened parameters"""
+            nested = {}
+            for key, value in flat_dict.items():
+                if not key.startswith(prefix + "."):
+                    continue
+                # Remove prefix
+                rel_key = key[len(prefix) + 1:]
+                parts = rel_key.split('.')
                 
-                try:
-                    # Navigate to parent
-                    for part in parts[1:-1]:  # Skip 'estimator' and last part
-                        if part.isdigit():
-                            obj = obj[int(part)]
-                        else:
-                            obj = getattr(obj, part)
-                    
-                    # Set the final attribute
-                    final_name = parts[-1]
-                    if hasattr(obj, final_name):
-                        setattr(obj, final_name, value)
-                        loaded += 1
-                except Exception as e:
-                    # Skip if can't set
-                    pass
+                # Navigate/create nested structure
+                current = nested
+                for part in parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                
+                # Set leaf value
+                current[parts[-1]] = value
+            
+            return nested
         
+        # Unflatten parameters
+        nested_params = unflatten_parameters(cache_dict, "estimator")
+        
+        # Use MLX's update method to load weights
+        self.estimator.update(nested_params)
+        
+        loaded = len(cache_dict)
         print(f">> Loaded {loaded} weights from cache")
         return loaded
 

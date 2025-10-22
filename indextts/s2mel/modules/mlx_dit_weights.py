@@ -4,6 +4,7 @@ Handles PyTorch to MLX weight conversion
 """
 
 import mlx.core as mx
+import mlx.nn as nn
 import numpy as np
 
 
@@ -74,13 +75,18 @@ def load_dit_weights(mlx_dit, pytorch_state_dict, prefix="models.cfm.estimator."
         mlx_dit.x_embedder.bias = mx.array(pytorch_state_dict[f"{prefix}x_embedder.bias"])
         loaded += 1
     
-    # cond_projection
-    if f"{prefix}cond_projection.weight" in pytorch_state_dict:
-        mlx_dit.cond_projection.weight = mx.array(pytorch_state_dict[f"{prefix}cond_projection.weight"])
-        loaded += 1
-    if f"{prefix}cond_projection.bias" in pytorch_state_dict:
-        mlx_dit.cond_projection.bias = mx.array(pytorch_state_dict[f"{prefix}cond_projection.bias"])
-        loaded += 1
+    # cond_projection or cond_embedder (depends on content_type)
+    if hasattr(mlx_dit, 'cond_projection'):
+        if f"{prefix}cond_projection.weight" in pytorch_state_dict:
+            mlx_dit.cond_projection.weight = mx.array(pytorch_state_dict[f"{prefix}cond_projection.weight"])
+            loaded += 1
+        if f"{prefix}cond_projection.bias" in pytorch_state_dict:
+            mlx_dit.cond_projection.bias = mx.array(pytorch_state_dict[f"{prefix}cond_projection.bias"])
+            loaded += 1
+    elif hasattr(mlx_dit, 'cond_embedder'):
+        if f"{prefix}cond_embedder.weight" in pytorch_state_dict:
+            mlx_dit.cond_embedder.weight = mx.array(pytorch_state_dict[f"{prefix}cond_embedder.weight"])
+            loaded += 1
     
     # t_embedder
     if f"{prefix}t_embedder.freqs" in pytorch_state_dict:
