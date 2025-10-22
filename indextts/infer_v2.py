@@ -38,7 +38,7 @@ import torch.nn.functional as F
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
-            use_cuda_kernel=None,use_deepspeed=False, use_mlx=False, diffusion_steps=20
+            use_cuda_kernel=None,use_deepspeed=False, use_mlx=False, diffusion_steps=25
     ):
         """
         Args:
@@ -49,7 +49,7 @@ class IndexTTS2:
             use_cuda_kernel (None | bool): whether to use BigVGan custom fused activation CUDA kernel, only for CUDA device.
             use_deepspeed (bool): whether to use DeepSpeed or not.
             use_mlx (bool): whether to enable MLX optimizations for Apple Silicon M4.
-            diffusion_steps (int): number of diffusion steps for S2MEL (default: 20, range: 10-25).
+            diffusion_steps (int): number of diffusion steps for S2MEL (default: 25, range: 10-25).
         """
         # MLX optimization mode for Apple Silicon M4
         self.use_mlx = use_mlx
@@ -106,7 +106,7 @@ class IndexTTS2:
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
         self.dtype = torch.float16 if self.use_fp16 else None
-        self.diffusion_steps = diffusion_steps  # Number of diffusion steps for S2MEL (default: 20)
+        self.diffusion_steps = diffusion_steps  # Number of diffusion steps for S2MEL (default: 25)
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
 
         # 🎯 内存优化：Qwen Emotion 延迟加载（节省 ~1.2GB）
@@ -131,8 +131,12 @@ class IndexTTS2:
                 )
                 # Load weights
                 self.mlx_transformer.load_weights_from_dict(mlx_gpt_weights)
+                
+                # 🔥 关键修复：为了保持音色一致性，我们需要确保使用正确的conditioning
+                # 将在运行时使用MLX模型的get_conditioning方法，但要确保精度
+                
                 self.gpt_is_mlx = True
-                self.gpt = None  # 🎯 不加载 PyTorch 模型！节省 ~2.5GB
+                self.gpt = None  # 🎯 不加载完整的 PyTorch 模型！节省内存
                 print(">> ✓ Pure MLX GPT loaded successfully")
                 print(">> ✓ PyTorch GPT skipped (saved ~2.5GB memory)")
                 print("   (MLX: Conformer + Perceiver + Emotion Conditioning)")
@@ -357,6 +361,22 @@ class IndexTTS2:
             print("\nNext run will load from cache (faster!)")
             print("="*70 + "\n")
 
+    def _print_mps_memory(self, step_name=""):
+        """打印MPS内存使用情况，格式：总量：[应用/驱动]"""
+        if self.device == 'mps' and torch.backends.mps.is_available():
+            try:
+                allocated = torch.mps.current_allocated_memory() / 1024**3  # GB - 应用分配内存
+                driver = torch.mps.driver_allocated_memory() / 1024**3  # GB - 驱动分配内存
+                total = allocated + driver  # 总量 = 应用内存 + 驱动内存
+                status_text = f" {step_name}" if step_name else ""
+                print(f">> MPS内存{status_text}: {total:.2f}GB：[{allocated:.2f}/{driver:.2f}]")
+            except Exception as e:
+                status_text = f" {step_name}" if step_name else ""
+                print(f">> MPS内存{status_text}: 无法获取内存信息 ({e})")
+        else:
+            status_text = f" {step_name}" if step_name else ""
+            print(f">> MPS内存{status_text}: 非MPS设备，跳过内存监控")
+
     @torch.no_grad()
     def get_emb(self, input_features, attention_mask):
         vq_emb = self.semantic_model(
@@ -575,7 +595,7 @@ class IndexTTS2:
             if self.use_mlx:
                 import mlx.core as mx
                 try:
-                    mx.metal.clear_cache()
+                    mx.clear_cache()
                 except:
                     pass
 
@@ -596,6 +616,7 @@ class IndexTTS2:
                 mx.random.seed(seed)
         
         print(">> starting inference...")
+        self._print_mps_memory("推理开始")
         self._set_gr_progress(0, "starting inference...")
         if verbose:
             print(f"origin text:{text}, spk_audio_prompt:{spk_audio_prompt}, "
@@ -653,6 +674,7 @@ class IndexTTS2:
 
             # 🎯 加载 Semantic Model（按需）
             self._ensure_semantic_loaded()
+            self._print_mps_memory("特征提取前")
             
             inputs = self.extract_features(audio_16k, sampling_rate=16000, return_tensors="pt")
             input_features = inputs["input_features"]
@@ -665,6 +687,7 @@ class IndexTTS2:
             
             # 🎯 特征提取完成，卸载 Semantic Model
             self._unload_semantic()
+            self._print_mps_memory("特征提取后")
             
             ref_mel = self.mel_fn(audio_22k.to(spk_cond_emb.device).float())
             ref_target_lengths = torch.LongTensor([ref_mel.size(2)]).to(ref_mel.device)
@@ -801,6 +824,7 @@ class IndexTTS2:
                 print("text_token_syms is same as segment tokens", text_token_syms == sent)
             
             m_start_time = time.perf_counter()
+            self._print_mps_memory(f"GPT生成前(段落{seg_idx+1})")
             with torch.no_grad():
                 with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
                     # Profiling: emovec计算
@@ -835,15 +859,14 @@ class IndexTTS2:
                             # 🚀 优化：检查GPT Conditioning缓存
                             if self.cache_gpt_conditioning_latent_mlx is not None:
                                 # 缓存命中：直接用缓存的conditioning进行generation
-                                print(f">> [Cache Hit] Using cached GPT conditioning")
+                                print(f">> [Cache Hit] Using cached MLX GPT conditioning")
                                 print(f"   Cached MLX shape: {self.cache_gpt_conditioning_latent_mlx.shape}")
-                                print(f"   Cached Torch shape: {self.cache_gpt_conditioning_latent_torch.shape}")
-                                from indextts.utils.mlx_utils import torch_to_mlx
+                                from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
                                 
                                 # 只需要转换text和执行generation
                                 print(f">> [Cache] Converting text to MLX...")
                                 text_mlx = torch_to_mlx(text_tokens.cpu())
-                                print(f">> [Cache] Running generation with cached conditioning...")
+                                print(f">> [Cache] Running generation with cached MLX conditioning...")
                                 codes = self.mlx_transformer.simple_forward(
                                     text_mlx,
                                     conditioning=self.cache_gpt_conditioning_latent_mlx,  # 使用MLX缓存
@@ -853,12 +876,11 @@ class IndexTTS2:
                                     debug_generation=generation_kwargs.get('debug_generation', False),
                                 )
                                 print(f">> [Cache] Generation complete, converting back...")
-                                from indextts.utils.mlx_utils import mlx_to_torch
                                 codes = mlx_to_torch(codes, device='cpu').long().to(text_tokens.device)
                                 print(f">> [Cache] Codes converted: {codes.shape}")
-                                # 🔥 关键修复：使用缓存的PyTorch conditioning（保留音色特征！）
-                                speech_conditioning_latent = self.cache_gpt_conditioning_latent_torch
-                                print(f">> [Cache] Using cached PyTorch conditioning (preserves voice): {speech_conditioning_latent.shape}")
+                                # 🔥 MLX模式：从MLX缓存转换回PyTorch格式用于后续处理
+                                speech_conditioning_latent = mlx_to_torch(self.cache_gpt_conditioning_latent_mlx, device=text_tokens.device)
+                                print(f">> [MLX Native] Using cached MLX conditioning converted to PyTorch: {speech_conditioning_latent.shape}")
                             else:
                                 # 缓存未命中：完整计算并缓存
                                 print(f">> [Cache Miss] Computing GPT conditioning...")
@@ -875,18 +897,32 @@ class IndexTTS2:
                                     debug_generation=generation_kwargs.get('debug_generation', False),  # 传递 debug 模式
                                     return_conditioning_mlx=True,  # 请求返回MLX格式conditioning
                                 )
-                                # 解包返回值
+                                # 解包返回值并确保使用一致的conditioning
                                 if len(result) == 3:
-                                    codes, speech_conditioning_latent, cond_latent_mlx = result
-                                    # 🔥 关键：缓存MLX和PyTorch两个格式
-                                    self.cache_gpt_conditioning_latent_mlx = cond_latent_mlx
-                                    self.cache_gpt_conditioning_latent_torch = speech_conditioning_latent.clone()
-                                    print(f">> [Cache] GPT conditioning cached (MLX + Torch)")
-                                    print(f"   MLX shape: {cond_latent_mlx.shape}")
-                                    print(f"   Torch shape: {speech_conditioning_latent.shape}")
+                                    codes, speech_conditioning_latent_mlx_converted, cond_latent_mlx = result
                                 else:
-                                    codes, speech_conditioning_latent = result
-                                    print(f">> [Cache] GPT conditioning computed (no MLX return)")
+                                    codes, speech_conditioning_latent_mlx_converted = result
+                                    cond_latent_mlx = None
+                                
+                                # 🔥 CRITICAL: 使用MLX模型的get_conditioning方法确保与PyTorch版本一致
+                                # 这样可以保证在相同输入变量下产生一致的结果（忽略精度累计差异）
+                                speech_conditioning_latent = self.mlx_transformer.get_conditioning(
+                                    spk_cond_emb.transpose(1, 2), 
+                                    torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device)
+                                )
+                                print(f">> [MLX Consistency] Using MLX get_conditioning for PyTorch-MLX consistency")
+                                
+                                # 🔥 关键：缓存MLX格式
+                                if cond_latent_mlx is not None:
+                                    self.cache_gpt_conditioning_latent_mlx = cond_latent_mlx
+                                    print(f">> [Cache] GPT conditioning cached (MLX native)")
+                                    print(f"   MLX shape: {cond_latent_mlx.shape}")
+                                    print(f"   Consistent Torch shape: {speech_conditioning_latent.shape}")
+                                else:
+                                    from indextts.utils.mlx_utils import torch_to_mlx
+                                    # 缓存MLX版本用于后续推理
+                                    self.cache_gpt_conditioning_latent_mlx = torch_to_mlx(speech_conditioning_latent.cpu())
+                                    print(f">> [Cache] GPT conditioning cached from consistent result")
                     else:
                         # PyTorch inference
                         if self.gpt is None:
@@ -896,26 +932,27 @@ class IndexTTS2:
                         # PyTorch's do_sample=True is not deterministic even with fixed seed
                         use_sampling_mode = False if num_beams == 1 else do_sample
 
-                    codes, speech_conditioning_latent = self.gpt.inference_speech(
-                        spk_cond_emb,
-                        text_tokens,
-                        emo_cond_emb,
-                        cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_vec=emovec,
-                            do_sample=use_sampling_mode,
-                        top_p=top_p,
-                        top_k=top_k,
-                        temperature=temperature,
-                        num_return_sequences=autoregressive_batch_size,
-                        length_penalty=length_penalty,
-                        num_beams=num_beams,
-                        repetition_penalty=repetition_penalty,
-                        max_generate_length=max_mel_tokens,
-                        **generation_kwargs
-                    )
+                        codes, speech_conditioning_latent = self.gpt.inference_speech(
+                            spk_cond_emb,
+                            text_tokens,
+                            emo_cond_emb,
+                            cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_vec=emovec,
+                                do_sample=use_sampling_mode,
+                            top_p=top_p,
+                            top_k=top_k,
+                            temperature=temperature,
+                            num_return_sequences=autoregressive_batch_size,
+                            length_penalty=length_penalty,
+                            num_beams=num_beams,
+                            repetition_penalty=repetition_penalty,
+                            max_generate_length=max_mel_tokens,
+                            **generation_kwargs
+                        )
 
                 gpt_gen_time += time.perf_counter() - m_start_time
+                self._print_mps_memory(f"GPT生成后(段落{seg_idx+1})")
                 if not has_warned and (codes[:, -1] != self.stop_mel_token).any():
                     warnings.warn(
                         f"WARN: generation stopped due to exceeding `max_mel_tokens` ({max_mel_tokens}). "
@@ -966,26 +1003,26 @@ class IndexTTS2:
                     else:
                         if self.gpt is None:
                             raise RuntimeError("PyTorch GPT not loaded.")
-                    latent = self.gpt(
-                        speech_conditioning_latent,
-                        text_tokens,
-                        torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
-                        codes,
-                        torch.tensor([codes.shape[-1]], device=text_tokens.device),
-                        emo_cond_emb,
-                        cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_vec=emovec,
-                        use_speed=use_speed,
-                    )
+                        latent = self.gpt(
+                            speech_conditioning_latent,
+                            text_tokens,
+                            torch.tensor([text_tokens.shape[-1]], device=text_tokens.device),
+                            codes,
+                            torch.tensor([codes.shape[-1]], device=text_tokens.device),
+                            emo_cond_emb,
+                            cond_mel_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_cond_mel_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                            emo_vec=emovec,
+                            use_speed=use_speed,
+                        )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
-                    # 🚀 V3优化: 减少diffusion steps（20→15，预期-0.5s，-25%）
-                    diffusion_steps = 15  # 从20降低到15，需验证音质
-                    # diffusion_steps = self.diffusion_steps  # 原始值：20
+                    self._print_mps_memory(f"S2MEL处理前(段落{seg_idx+1})")
+                    # 🚀 使用配置的diffusion steps，默认25步提升音质
+                    diffusion_steps = self.diffusion_steps  # 默认值：25
                     inference_cfg_rate = 0.7
                     
                     # Profiling: gpt_layer
@@ -1063,11 +1100,14 @@ class IndexTTS2:
 
                     # Print detailed profiling
                     print(f">> S2MEL breakdown: gpt_layer={t_gpt_layer:.2f}s, vq2emb={t_vq2emb:.2f}s, prepare={t_prepare:.4f}s, length_reg={t_length_reg:.2f}s, cfm={t_cfm:.2f}s (steps={diffusion_steps})")
+                    self._print_mps_memory(f"S2MEL处理后(段落{seg_idx+1})")
                     
                     m_start_time = time.perf_counter()
+                    self._print_mps_memory(f"BigVGAN处理前(段落{seg_idx+1})")
                     wav = self.bigvgan(vc_target.float()).squeeze().unsqueeze(0)
                     print(wav.shape)
                     bigvgan_time += time.perf_counter() - m_start_time
+                    self._print_mps_memory(f"BigVGAN处理后(段落{seg_idx+1})")
                     wav = wav.squeeze(1)
 
                 wav = torch.clamp(32767 * wav, -32767.0, 32767.0)
@@ -1081,6 +1121,7 @@ class IndexTTS2:
                         silence = self.interval_silence(wavs, sampling_rate=sampling_rate, interval_silence=interval_silence)
                     yield silence
         end_time = time.perf_counter()
+        self._print_mps_memory("推理完成")
 
         self._set_gr_progress(0.9, "saving audio...")
         wavs = self.insert_interval_silence(wavs, sampling_rate=sampling_rate, interval_silence=interval_silence)

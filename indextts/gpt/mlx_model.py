@@ -268,14 +268,36 @@ class UnifiedVoiceMLX(nn.Module):
             from indextts.gpt.mlx_conditioning import MLXConditioningModule
             
             # Speaker conditioning (32 latents)
-            self.conditioning_module = MLXConditioningModule(
-                input_dim=1024,         # Speaker embedding dimension
-                conformer_dim=512,      # Conformer output (matches PyTorch)
-                model_dim=model_dim,    # 1280
-                num_latents=32,         # Output 32 conditioning latents
-                conformer_layers=6,     # 6 layers (matches PyTorch)
-                perceiver_depth=2       # 2 layers (matches PyTorch)
-            )
+            # Get speaker conformer config from kwargs
+            condition_module = kwargs.get('condition_module', None)
+            if condition_module is not None:
+                spk_cfg = condition_module
+                self.conditioning_module = MLXConditioningModule(
+                    input_dim=1024,                      # Speaker embedding dimension
+                    conformer_dim=spk_cfg['output_size'],  # 512
+                    model_dim=model_dim,                 # 1280
+                    num_latents=32,                      # Output 32 conditioning latents
+                    conformer_layers=spk_cfg['num_blocks'],  # From config (6)
+                    conformer_heads=spk_cfg['attention_heads'],  # From config (8)
+                    conformer_ff_mult=spk_cfg['linear_units'] // spk_cfg['output_size'],  # 2048/512 = 4
+                    perceiver_depth=2,                   # 2 layers
+                    perceiver_heads=spk_cfg['attention_heads'],  # From config (8)
+                    perceiver_ff_mult=spk_cfg['perceiver_mult']  # From config (2)
+                )
+            else:
+                # Fallback to defaults
+                self.conditioning_module = MLXConditioningModule(
+                    input_dim=1024,
+                    conformer_dim=512,
+                    model_dim=model_dim,
+                    num_latents=32,
+                    conformer_layers=6,
+                    conformer_heads=8,
+                    conformer_ff_mult=4,
+                    perceiver_depth=2,
+                    perceiver_heads=8,
+                    perceiver_ff_mult=2
+                )
             
             # Emotion conditioning (1 latent for emotion vector)
             # Get emotion conformer config from kwargs
