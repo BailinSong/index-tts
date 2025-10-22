@@ -567,6 +567,104 @@ class MLXCFM(nn.Module):
         return result
 
 
+    def load_weights_from_pytorch(self, pytorch_state_dict, prefix="models.cfm."):
+        """
+        Load CFM weights from PyTorch.
+        
+        Args:
+            pytorch_state_dict: dict with numpy arrays
+            prefix: key prefix
+        
+        Returns:
+            Number of weights loaded
+        """
+        from indextts.s2mel.modules.mlx_dit_weights import load_dit_weights
+        
+        # Load DiT/estimator weights
+        estimator_prefix = f"{prefix}estimator."
+        loaded = load_dit_weights(self.estimator, pytorch_state_dict, estimator_prefix)
+        
+        print(f">> MLX CFM loaded {loaded} weights total")
+        return loaded
+    
+    def extract_weights_for_cache(self):
+        """
+        Extract all MLX weights from CFM for caching.
+        
+        Returns:
+            dict of {name: mx.array} suitable for mx.savez()
+        """
+        weights = {}
+        
+        def extract_from_module(module, prefix=""):
+            """Recursively extract weights"""
+            for name in dir(module):
+                if name.startswith('_'):
+                    continue
+                
+                try:
+                    attr = getattr(module, name)
+                    full_name = f"{prefix}.{name}" if prefix else name
+                    
+                    if isinstance(attr, mx.array):
+                        weights[full_name] = attr
+                    elif isinstance(attr, list):
+                        # Handle lists of layers
+                        for i, item in enumerate(attr):
+                            if hasattr(item, '__dict__'):
+                                extract_from_module(item, f"{full_name}.{i}")
+                    elif hasattr(attr, '__dict__') and not callable(attr):
+                        # Recursively extract from sub-modules
+                        extract_from_module(attr, full_name)
+                except:
+                    pass
+        
+        # Extract from estimator (DiT)
+        extract_from_module(self.estimator, "estimator")
+        
+        print(f">> Extracted {len(weights)} weight arrays for caching")
+        return weights
+    
+    def load_from_cache(self, cache_dict):
+        """
+        Load CFM weights from cached MLX arrays.
+        
+        Args:
+            cache_dict: dict from mx.load()
+        
+        Returns:
+            Number of weights loaded
+        """
+        loaded = 0
+        
+        # Load into estimator
+        for key, value in cache_dict.items():
+            if key.startswith("estimator."):
+                # Navigate to the nested attribute
+                parts = key.split('.')
+                obj = self.estimator
+                
+                try:
+                    # Navigate to parent
+                    for part in parts[1:-1]:  # Skip 'estimator' and last part
+                        if part.isdigit():
+                            obj = obj[int(part)]
+                        else:
+                            obj = getattr(obj, part)
+                    
+                    # Set the final attribute
+                    final_name = parts[-1]
+                    if hasattr(obj, final_name):
+                        setattr(obj, final_name, value)
+                        loaded += 1
+                except Exception as e:
+                    # Skip if can't set
+                    pass
+        
+        print(f">> Loaded {loaded} weights from cache")
+        return loaded
+
+
 def create_mlx_cfm_from_pytorch(pytorch_cfm, config):
     """
     Create MLX CFM from PyTorch CFM model.
@@ -584,8 +682,8 @@ def create_mlx_cfm_from_pytorch(pytorch_cfm, config):
     state_dict = pytorch_cfm.state_dict()
     state_dict_np = {k: v.cpu().numpy() for k, v in state_dict.items()}
     
-    # TODO: Implement weight loading
-    # This requires mapping PyTorch GPT-fast weights to MLX Transformer weights
+    # Load weights
+    mlx_cfm.load_weights_from_pytorch(state_dict_np, prefix="")
     
     return mlx_cfm
 

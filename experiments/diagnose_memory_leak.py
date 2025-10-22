@@ -111,7 +111,7 @@ def test_inference_loop():
             gc.collect()
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
-            mx.metal.clear_cache()
+            mx.clear_cache()
             
             mem_after_gc = get_memory_usage()
             print(f"   >> GC后 MPS: {mem_after_gc['mps_allocated_gb']:.2f} GB")

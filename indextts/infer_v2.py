@@ -218,16 +218,16 @@ class IndexTTS2:
         self.mlx_s2mel_gpt_layer = None
         self.mlx_s2mel_length_regulator = None
         
-        # 🚀 启用S2MEL MLX模块（gpt_layer + length_regulator）
+        # 🚀 启用S2MEL MLX模块（gpt_layer + length_regulator + cfm）
+        self.mlx_s2mel_cfm = None
         if self.use_mlx and self.mlx_available:
-            print("\n>> [Model 2/4] Loading S2MEL MLX modules (gpt_layer + length_regulator)...")
+            print("\n>> [Model 2/4] Loading S2MEL MLX modules...")
             try:
                 from indextts.s2mel.modules.mlx_s2mel import MLXGPTLayer, MLXLengthRegulator
+                from indextts.s2mel.modules.mlx_cfm import MLXCFM
                 
-                # Create gpt_layer
+                # Create gpt_layer and length_regulator (always needed)
                 self.mlx_s2mel_gpt_layer = MLXGPTLayer()
-                
-                # Create length_regulator
                 self.mlx_s2mel_length_regulator = MLXLengthRegulator(
                     channels=self.cfg.s2mel.length_regulator.channels,
                     sampling_ratios=tuple(self.cfg.s2mel.length_regulator.sampling_ratios),
@@ -242,8 +242,11 @@ class IndexTTS2:
                 print(">> S2MEL MLX modules created successfully")
             except Exception as e:
                 print(f">> S2MEL MLX modules creation failed: {e}")
+                import traceback
+                traceback.print_exc()
                 self.mlx_s2mel_gpt_layer = None
                 self.mlx_s2mel_length_regulator = None
+                self.mlx_s2mel_cfm = None
         
         s2mel = MyModel(self.cfg.s2mel, use_gpt_latent=True)
         s2mel, _, _, _ = load_checkpoint2(
@@ -259,21 +262,81 @@ class IndexTTS2:
         self.s2mel.eval()
         print(">> s2mel weights restored from:", s2mel_path)
         
-        # Load weights into MLX S2MEL modules
+        # Load weights into MLX S2MEL modules with caching
         if self.use_mlx and self.mlx_available:
-            if self.mlx_s2mel_gpt_layer is not None or self.mlx_s2mel_length_regulator is not None:
+            if self.mlx_s2mel_gpt_layer is not None or self.mlx_s2mel_length_regulator is not None or self.mlx_s2mel_cfm is not None:
                 print(">> Loading weights into S2MEL MLX modules...")
                 s2mel_state_dict = self.s2mel.state_dict()
                 s2mel_state_dict_np = {k: v.cpu().numpy() for k, v in s2mel_state_dict.items()}
                 
+                # Load gpt_layer weights (lightweight, no need to cache separately)
                 if self.mlx_s2mel_gpt_layer is not None:
                     self.mlx_s2mel_gpt_layer.load_weights_from_pytorch(s2mel_state_dict_np)
                 
+                # Load length_regulator weights (lightweight, no need to cache separately)
                 if self.mlx_s2mel_length_regulator is not None:
                     self.mlx_s2mel_length_regulator.load_weights_from_pytorch(s2mel_state_dict_np)
                 
+                # 🔥 CFM: 检查缓存，首次运行则转换并缓存
+                if self.mlx_s2mel_cfm is not None:
+                    cfm_cache_file = os.path.join(self.mlx_cache.cache_dir, "s2mel_cfm.npz")
+                    
+                    if os.path.exists(cfm_cache_file):
+                        # 从缓存加载
+                        print(">> Loading S2MEL CFM from cache...")
+                        print(f"   Cache: {cfm_cache_file}")
+                        
+                        try:
+                            import mlx.core as mx
+                            cfm_weights = mx.load(cfm_cache_file)
+                            # Load weights into CFM
+                            self.mlx_s2mel_cfm.load_from_cache(cfm_weights)
+                            
+                            # Get cache size
+                            size_mb = os.path.getsize(cfm_cache_file) / (1024 * 1024)
+                            print(f"   Size: {size_mb:.2f} MB")
+                            print(">> ✓ Loaded from cache (fast!)")
+                        except Exception as e:
+                            print(f">> ✗ Cache loading failed: {e}")
+                            print(">> Converting from PyTorch...")
+                            self.mlx_s2mel_cfm.load_weights_from_pytorch(s2mel_state_dict_np, prefix="models.cfm.")
+                    else:
+                        # 首次运行：转换并缓存
+                        print(">> S2MEL CFM cache not found (first run)")
+                        print(">> Converting PyTorch CFM to MLX and caching...")
+                        print("   ⏳ This will take a few minutes on first run...")
+                        
+                        try:
+                            # Load weights
+                            loaded = self.mlx_s2mel_cfm.load_weights_from_pytorch(s2mel_state_dict_np, prefix="models.cfm.")
+                            print(f">> Loaded {loaded} weights")
+                            
+                            # Extract and cache weights
+                            print(">> Caching weights for future runs...")
+                            cfm_weights_to_cache = self.mlx_s2mel_cfm.extract_weights_for_cache()
+                            
+                            # Save to cache
+                            os.makedirs(self.mlx_cache.cache_dir, exist_ok=True)
+                            import mlx.core as mx
+                            mx.savez(cfm_cache_file, **cfm_weights_to_cache)
+                            
+                            size_mb = os.path.getsize(cfm_cache_file) / (1024 * 1024)
+                            print(f">> ✓ Cached to {cfm_cache_file}")
+                            print(f"   Size: {size_mb:.2f} MB")
+                            print(">> Next run will load from cache (much faster!)")
+                        except Exception as e:
+                            print(f">> ✗ Conversion/caching failed: {e}")
+                            print(">> CFM will use PyTorch fallback")
+                            import traceback
+                            traceback.print_exc()
+                            self.mlx_s2mel_cfm = None
+                
                 print(">> S2MEL MLX modules ready")
-            print(">> S2MEL: Running on MPS with MLX optimizations (gpt_layer + length_regulator)")
+            
+            if self.mlx_s2mel_cfm is not None:
+                print(">> S2MEL: Running on MPS with FULL MLX ⚡ (gpt_layer + length_regulator + cfm)")
+            else:
+                print(">> S2MEL: Running on MPS with MLX optimizations (gpt_layer + length_regulator)")
 
         # load campplus_model
         campplus_ckpt_path = hf_hub_download(
