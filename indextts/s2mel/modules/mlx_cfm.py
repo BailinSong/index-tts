@@ -192,11 +192,11 @@ class MLXDiT(nn.Module):
         self.x_embedder = nn.Linear(dit_cfg.in_channels, dit_cfg.hidden_dim, bias=True)
         
         # Content embedding
+        # Note: PyTorch creates BOTH cond_embedder and cond_projection, but only uses cond_projection
+        # (see diffusion_transformer.py lines 132-133, 207)
         self.content_type = dit_cfg.content_type
-        if self.content_type == 'discrete':
-            self.cond_embedder = nn.Embedding(dit_cfg.content_codebook_size, dit_cfg.hidden_dim)
-        else:
-            self.cond_projection = nn.Linear(dit_cfg.content_dim, dit_cfg.hidden_dim, bias=True)
+        self.cond_embedder = nn.Embedding(dit_cfg.content_codebook_size, dit_cfg.hidden_dim)
+        self.cond_projection = nn.Linear(dit_cfg.content_dim, dit_cfg.hidden_dim, bias=True)
         
         # Timestep embedder
         self.t_embedder = MLXTimestepEmbedder(dit_cfg.hidden_dim)
@@ -297,12 +297,9 @@ class MLXDiT(nn.Module):
         
         # Project conditioning
         # cond format: (batch, seq_len, content_dim) - matching PyTorch DiT
-        if self.content_type == 'discrete':
-            # Discrete mode: cond is already embeddings, no projection needed
-            cond_proj = cond  # (batch, seq_len, content_dim)
-        else:
-            # Continuous mode: project to hidden_dim
-            cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
+        # Note: PyTorch ALWAYS uses cond_projection regardless of content_type
+        # (see diffusion_transformer.py line 207)
+        cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
         
         # Transpose x and prompt_x to (batch, seq_len, channels)
         x_t = x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)

@@ -122,6 +122,9 @@ class MLXWaveNet(nn.Module):
         # PyTorch WaveNet uses (batch, channels, seq_len)
         # We keep MLX format internally
         
+        # Reshape mask for MLX broadcast: (batch, 1, seq_len) -> (batch, seq_len, 1)
+        x_mask_mlx = x_mask.transpose(0, 2, 1)  # (batch, seq_len, 1)
+        
         output = mx.zeros_like(x)
         
         # Process global conditioning
@@ -132,7 +135,7 @@ class MLXWaveNet(nn.Module):
         
         for i in range(self.n_layers):
             # Apply mask
-            x_in = self.in_layers[i](x * x_mask)  # (batch, seq_len, 2*hidden_channels)
+            x_in = self.in_layers[i](x * x_mask_mlx)  # (batch, seq_len, 2*hidden_channels)
             
             # Add global conditioning
             if g_cond is not None:
@@ -155,11 +158,11 @@ class MLXWaveNet(nn.Module):
                 res_acts = res_skip_acts[:, :, :self.hidden_channels]
                 skip_acts = res_skip_acts[:, :, self.hidden_channels:]
                 
-                x = (x + res_acts) * x_mask
+                x = (x + res_acts) * x_mask_mlx
                 output = output + skip_acts
             else:
                 # Last layer: only skip
                 output = output + res_skip_acts
         
-        return output * x_mask
+        return output * x_mask_mlx
 
