@@ -7,6 +7,57 @@ import mlx.nn as nn
 from typing import Optional
 
 
+def mlx_pad_reflect_1d(x, padding_left, padding_right):
+    """
+    MLX实现的reflect padding for 1D  
+    x: (batch, seq_len, channels)
+    
+    注意: MLX不支持'reflect' mode，需要手动实现
+    """
+    if padding_left == 0 and padding_right == 0:
+        return x
+    
+    batch, seq_len, channels = x.shape
+    
+    # 手动实现reflect padding
+    # Reflect: [3,2,1] + [1,2,3,4,5] + [5,4,3]
+    if padding_left > 0:
+        # 取前padding_left个元素并反转
+        pad_size = min(padding_left, seq_len - 1)  # 不能超过seq_len-1
+        if pad_size > 0:
+            left_pad = x[:, 1:pad_size+1, :]  # Skip first element
+            left_pad = left_pad[:, ::-1, :]  # Reverse
+            if pad_size < padding_left:
+                # 需要额外padding，使用edge
+                extra = padding_left - pad_size
+                edge_pad = mx.broadcast_to(x[:, 0:1, :], (batch, extra, channels))
+                left_pad = mx.concatenate([edge_pad, left_pad], axis=1)
+        else:
+            left_pad = mx.broadcast_to(x[:, 0:1, :], (batch, padding_left, channels))
+        
+        x = mx.concatenate([left_pad, x], axis=1)
+    
+    if padding_right > 0:
+        current_seq = x.shape[1]
+        original_end = seq_len + padding_left - 1  # 原始序列的最后一个元素位置
+        pad_size = min(padding_right, seq_len - 1)
+        
+        if pad_size > 0:
+            # 取后padding_right个元素并反转
+            right_pad = x[:, original_end-pad_size:original_end, :]  # 倒数几个元素
+            right_pad = right_pad[:, ::-1, :]  # Reverse
+            if pad_size < padding_right:
+                extra = padding_right - pad_size
+                edge_pad = mx.broadcast_to(x[:, original_end:original_end+1, :], (batch, extra, channels))
+                right_pad = mx.concatenate([right_pad, edge_pad], axis=1)
+        else:
+            right_pad = mx.broadcast_to(x[:, original_end:original_end+1, :], (batch, padding_right, channels))
+        
+        x = mx.concatenate([x, right_pad], axis=1)
+    
+    return x
+
+
 def fused_add_tanh_sigmoid_multiply_mlx(input_a, input_b, n_channels):
     """
     MLX implementation of fused gated activation.
@@ -34,7 +85,7 @@ def fused_add_tanh_sigmoid_multiply_mlx(input_a, input_b, n_channels):
 class MLXWaveNet(nn.Module):
     """
     MLX implementation of WaveNet.
-    Simplified version for DiT final layer (no streaming cache for inference).
+    Matches PyTorch SConv1d behavior with reflect padding.
     """
     
     def __init__(
@@ -58,17 +109,18 @@ class MLXWaveNet(nn.Module):
         self.p_dropout = p_dropout
         
         # Input layers (dilated convolutions)
+        # Note: PyTorch SConv1d uses padding=0 in Conv1d and adds padding manually
         self.in_layers = []
         for i in range(n_layers):
             dilation = dilation_rate ** i
-            padding = int((kernel_size * dilation - dilation) / 2)
             
+            # SConv1d uses padding=0 and handles padding in forward
             layer = nn.Conv1d(
                 hidden_channels,
                 2 * hidden_channels,
                 kernel_size=kernel_size,
                 dilation=dilation,
-                padding=padding,
+                padding=0,  # No padding - we'll add it manually
                 bias=True
             )
             self.in_layers.append(layer)
@@ -135,7 +187,22 @@ class MLXWaveNet(nn.Module):
         
         for i in range(self.n_layers):
             # Apply mask
-            x_in = self.in_layers[i](x * x_mask_mlx)  # (batch, seq_len, 2*hidden_channels)
+            x_masked = x * x_mask_mlx
+            
+            # Apply reflect padding to match SConv1d behavior
+            # SConv1d calculates: padding_total = kernel_size - stride
+            # For stride=1: padding_total = kernel_size - 1
+            dilation = self.dilation_rate ** i
+            effective_kernel_size = (self.kernel_size - 1) * dilation + 1
+            padding_total = effective_kernel_size - 1  # stride=1
+            padding_right = padding_total // 2
+            padding_left = padding_total - padding_right
+            
+            # Apply reflect padding
+            x_padded = mlx_pad_reflect_1d(x_masked, padding_left, padding_right)
+            
+            # Apply convolution (padding=0 since we manually padded)
+            x_in = self.in_layers[i](x_padded)  # (batch, seq_len, 2*hidden_channels)
             
             # Add global conditioning
             if g_cond is not None:

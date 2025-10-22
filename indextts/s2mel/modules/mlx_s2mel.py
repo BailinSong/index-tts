@@ -203,17 +203,25 @@ class MLXLengthRegulator(nn.Module):
         # Interpolate BEFORE applying model layers (matches PyTorch)
         if self.interpolate and ylens_mx is not None:
             # PyTorch: F.interpolate(x.transpose(1,2), size=ylens.max(), mode='nearest')
-            # Input is (batch, seq, channels), PyTorch transposes to (batch, channels, seq)
-            # MLX Upsample expects (batch, spatial_dims..., channels)
+            # Input: (batch, seq, channels) -> transpose to (batch, channels, seq)
+            # Then interpolate along seq dimension
             
             target_len = int(ylens_mx.max())
             current_len = embedded.shape[1]
             
             if target_len != current_len:
-                # Use MLX Upsample with nearest mode
-                scale_factor = target_len / current_len
-                upsampler = nn.Upsample(scale_factor=scale_factor, mode='nearest')
-                embedded = upsampler(embedded)
+                # 手动实现nearest插值以精确匹配PyTorch
+                # PyTorch在(B,C,T)格式下沿T轴插值
+                # 我们需要在(B,T,C)格式下沿T轴插值
+                
+                # 计算每个输出位置对应的输入位置
+                scale = current_len / target_len
+                indices = mx.arange(target_len) * scale
+                indices = mx.floor(indices).astype(mx.int32)
+                indices = mx.minimum(indices, current_len - 1)  # Clamp to valid range
+                
+                # 使用索引选择
+                embedded = embedded[:, indices, :]  # (batch, target_len, channels)
         
         # Apply model layers (Conv1d, GroupNorm, Mish, final Conv1d)
         out = embedded
