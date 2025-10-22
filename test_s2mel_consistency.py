@@ -277,7 +277,7 @@ def test_s2mel_cfm_single_step():
         # PyTorch DiT中，cond格式: (batch, mel_timesteps, 512)
         content_dim = cfg.s2mel.DiT.content_dim if hasattr(cfg.s2mel.DiT, 'content_dim') else 512
         cond = torch.randn(batch_size, seq_len, content_dim)  # semantic conditioning
-        x_lens = mx.array([seq_len])
+        x_lens = torch.tensor([seq_len])  # PyTorch需要tensor
         t = torch.tensor([0.5])  # 中间时间步
         style = torch.randn(batch_size, 192)
         
@@ -289,6 +289,9 @@ def test_s2mel_cfm_single_step():
         print(f"  t: {t.item():.3f}")
         
         # PyTorch 推理 (DiT estimator 单步)
+        # 需要先初始化transformer的caches
+        s2mel.models['cfm'].estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
+        
         with torch.no_grad():
             torch_output = s2mel.models['cfm'].estimator(
                 x, prompt_x, x_lens, t, style, cond, mask_content=False
@@ -305,11 +308,22 @@ def test_s2mel_cfm_single_step():
         cond_mlx = torch_to_mlx(cond)
         t_mlx = torch_to_mlx(t)
         style_mlx = torch_to_mlx(style)
+        x_lens_mlx = torch_to_mlx(x_lens)
         
-        mlx_output = mlx_cfm.estimator(
-            x_mlx, prompt_x_mlx, x_lens, t_mlx, style_mlx, cond_mlx, mask_content=False
-        )
-        mx.eval(mlx_output)
+        try:
+            mlx_output = mlx_cfm.estimator(
+                x_mlx, prompt_x_mlx, x_lens_mlx, t_mlx, style_mlx, cond_mlx, mask_content=False
+            )
+            mx.eval(mlx_output)
+        except Exception as e:
+            print(f"\n❌ MLX forward failed: {e}")
+            print(f"   x_mlx shape: {x_mlx.shape}")
+            print(f"   prompt_x_mlx shape: {prompt_x_mlx.shape}")
+            print(f"   cond_mlx shape: {cond_mlx.shape}")
+            print(f"   x_lens_mlx: {x_lens_mlx}")
+            print(f"   t_mlx: {t_mlx}")
+            print(f"   style_mlx shape: {style_mlx.shape}")
+            raise
         
         print(f"\nMLX 输出:")
         print(f"  Shape: {mlx_output.shape}")

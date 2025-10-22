@@ -296,12 +296,12 @@ class MLXDiT(nn.Module):
         t_emb = self.t_embedder(t)  # (batch, hidden_dim)
         
         # Project conditioning
+        # cond format: (batch, seq_len, content_dim) - matching PyTorch DiT
         if self.content_type == 'discrete':
-            # Cond is already semantic embeddings from quantizer
-            # Need to transpose from (batch, content_dim, seq_len) to (batch, seq_len, content_dim)
-            cond_t = cond.transpose(0, 2, 1)  # (batch, seq_len, content_dim)
-            cond_proj = cond_t  # Keep as is (will be merged later)
+            # Discrete mode: cond is already embeddings, no projection needed
+            cond_proj = cond  # (batch, seq_len, content_dim)
         else:
+            # Continuous mode: project to hidden_dim
             cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
         
         # Transpose x and prompt_x to (batch, seq_len, channels)
