@@ -1,0 +1,2064 @@
+CFM 权重对比分析报告
+==================================================
+
+MLX CFM 权重数量: 256
+PyTorch CFM 权重数量: 256
+共同权重数量: 256
+MLX 独有权重: 0
+PyTorch 独有权重: 0
+
+权重对比统计:
+  形状不匹配: 0 个
+  大差异 (>1e-6): 0 个
+  小差异 (≤1e-6): 256 个
+
+所有权重详细对比:
+--------------------------------------------------------------------------------
+权重: cfm.estimator.cond_embedder.weight
+  形状: (1024, 512)
+  MLX 范围: [-4.811748, 4.624473]
+  PyTorch 范围: [-4.811748, 4.624473]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.cond_projection.bias
+  形状: (512,)
+  MLX 范围: [-0.021290, 0.015592]
+  PyTorch 范围: [-0.021290, 0.015592]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.cond_projection.weight
+  形状: (512, 512)
+  MLX 范围: [-0.199367, 0.149999]
+  PyTorch 范围: [-0.199367, 0.149999]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.cond_x_merge_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.051723, 0.081339]
+  PyTorch 范围: [-0.051723, 0.081339]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.cond_x_merge_linear.weight
+  形状: (512, 864)
+  MLX 范围: [-0.203994, 0.173933]
+  PyTorch 范围: [-0.203994, 0.173933]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.content_mask_embedder.weight
+  形状: (1, 512)
+  MLX 范围: [-3.884051, 2.775574]
+  PyTorch 范围: [-3.884051, 2.775574]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.conv1.bias
+  形状: (512,)
+  MLX 范围: [-0.027629, 0.021103]
+  PyTorch 范围: [-0.027629, 0.021103]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.conv1.weight
+  形状: (512, 512)
+  MLX 范围: [-0.182105, 0.198596]
+  PyTorch 范围: [-0.182105, 0.198596]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.conv2.bias
+  形状: (80,)
+  MLX 范围: [-0.039019, -0.007207]
+  PyTorch 范围: [-0.039019, -0.007207]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.conv2.weight
+  形状: (80, 512, 1)
+  MLX 范围: [-0.061494, 0.070150]
+  PyTorch 范围: [-0.061494, 0.070150]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.final_layer.adaLN_modulation.1.bias
+  形状: (1024,)
+  MLX 范围: [-0.024997, 0.117836]
+  PyTorch 范围: [-0.024997, 0.117836]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.final_layer.adaLN_modulation.1.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.833182, 0.734640]
+  PyTorch 范围: [-0.833182, 0.734640]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.final_layer.linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031843, 0.032068]
+  PyTorch 范围: [-0.031843, 0.032068]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.final_layer.linear.weight_g
+  形状: (512, 1)
+  MLX 范围: [0.026402, 0.144870]
+  PyTorch 范围: [0.026402, 0.144870]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.final_layer.linear.weight_v
+  形状: (512, 512)
+  MLX 范围: [-0.108877, 0.118911]
+  PyTorch 范围: [-0.108877, 0.118911]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.input_pos
+  形状: (16384,)
+  MLX 范围: [0.000000, 16383.000000]
+  PyTorch 范围: [0.000000, 16383.000000]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.res_projection.bias
+  形状: (512,)
+  MLX 范围: [-0.050069, 0.048781]
+  PyTorch 范围: [-0.050069, 0.048781]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.res_projection.weight
+  形状: (512, 512)
+  MLX 范围: [-0.062288, 0.070072]
+  PyTorch 范围: [-0.062288, 0.070072]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.skip_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.016021, 0.020367]
+  PyTorch 范围: [-0.016021, 0.020367]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.skip_linear.weight
+  形状: (512, 592)
+  MLX 范围: [-0.103260, 0.083585]
+  PyTorch 范围: [-0.103260, 0.083585]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder.freqs
+  形状: (128,)
+  MLX 范围: [0.000107, 1.000000]
+  PyTorch 范围: [0.000107, 1.000000]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder.mlp.0.bias
+  形状: (512,)
+  MLX 范围: [-0.024440, 0.034102]
+  PyTorch 范围: [-0.024440, 0.034102]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder.mlp.0.weight
+  形状: (512, 256)
+  MLX 范围: [-0.111110, 0.112438]
+  PyTorch 范围: [-0.111110, 0.112438]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder.mlp.2.bias
+  形状: (512,)
+  MLX 范围: [-0.024471, 0.046489]
+  PyTorch 范围: [-0.024471, 0.046489]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder.mlp.2.weight
+  形状: (512, 512)
+  MLX 范围: [-0.209579, 0.199322]
+  PyTorch 范围: [-0.209579, 0.199322]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder2.freqs
+  形状: (128,)
+  MLX 范围: [0.000107, 1.000000]
+  PyTorch 范围: [0.000107, 1.000000]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder2.mlp.0.bias
+  形状: (512,)
+  MLX 范围: [-0.024418, 0.045597]
+  PyTorch 范围: [-0.024418, 0.045597]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder2.mlp.0.weight
+  形状: (512, 256)
+  MLX 范围: [-0.102433, 0.103756]
+  PyTorch 范围: [-0.102433, 0.103756]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder2.mlp.2.bias
+  形状: (512,)
+  MLX 范围: [-0.086807, 0.078049]
+  PyTorch 范围: [-0.086807, 0.078049]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.t_embedder2.mlp.2.weight
+  形状: (512, 512)
+  MLX 范围: [-0.475817, 0.436083]
+  PyTorch 范围: [-0.475817, 0.436083]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.102296, 0.112678]
+  PyTorch 范围: [-0.102296, 0.112678]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.241086, 0.212624]
+  PyTorch 范围: [-0.241086, 0.212624]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.029793, 0.118808]
+  PyTorch 范围: [-0.029793, 0.118808]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.049709, 0.048808]
+  PyTorch 范围: [-0.049709, 0.048808]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.152626, 0.133447]
+  PyTorch 范围: [-0.152626, 0.133447]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.330416, 0.373874]
+  PyTorch 范围: [-0.330416, 0.373874]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.140872, 0.150705]
+  PyTorch 范围: [-0.140872, 0.150705]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.141692, 0.131841]
+  PyTorch 范围: [-0.141692, 0.131841]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.033214, 0.132284]
+  PyTorch 范围: [-0.033214, 0.132284]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.059300, 0.062012]
+  PyTorch 范围: [-0.059300, 0.062012]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.207374, 0.229774]
+  PyTorch 范围: [-0.207374, 0.229774]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031217, 0.031231]
+  PyTorch 范围: [-0.031217, 0.031231]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.0.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.102768, 0.098683]
+  PyTorch 范围: [-0.102768, 0.098683]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.348556, 0.408202]
+  PyTorch 范围: [-0.348556, 0.408202]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.029254, 0.105282]
+  PyTorch 范围: [-0.029254, 0.105282]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.071568, 0.079013]
+  PyTorch 范围: [-0.071568, 0.079013]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.225693, 0.307585]
+  PyTorch 范围: [-0.225693, 0.307585]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.292657, 0.234314]
+  PyTorch 范围: [-0.292657, 0.234314]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.148916, 0.141950]
+  PyTorch 范围: [-0.148916, 0.141950]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.269526, 0.278332]
+  PyTorch 范围: [-0.269526, 0.278332]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.026664, 0.170242]
+  PyTorch 范围: [0.026664, 0.170242]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.062381, 0.080547]
+  PyTorch 范围: [-0.062381, 0.080547]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.381505, 0.384098]
+  PyTorch 范围: [-0.381505, 0.384098]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031196, 0.031223]
+  PyTorch 范围: [-0.031196, 0.031223]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.1.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.088078, 0.098883]
+  PyTorch 范围: [-0.088078, 0.098883]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.213884, 0.238878]
+  PyTorch 范围: [-0.213884, 0.238878]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.000441, 0.141212]
+  PyTorch 范围: [-0.000441, 0.141212]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.069760, 0.069861]
+  PyTorch 范围: [-0.069760, 0.069861]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.241768, 0.229860]
+  PyTorch 范围: [-0.241768, 0.229860]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.189028, 0.150879]
+  PyTorch 范围: [-0.189028, 0.150879]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.121436, 0.123403]
+  PyTorch 范围: [-0.121436, 0.123403]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.210766, 0.295372]
+  PyTorch 范围: [-0.210766, 0.295372]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.012522, 0.116454]
+  PyTorch 范围: [0.012522, 0.116454]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.077178, 0.079643]
+  PyTorch 范围: [-0.077178, 0.079643]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.172589, 0.173225]
+  PyTorch 范围: [-0.172589, 0.173225]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.181305, 0.129536]
+  PyTorch 范围: [-0.181305, 0.129536]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.10.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.145852, 0.140828]
+  PyTorch 范围: [-0.145852, 0.140828]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.146256, 0.202770]
+  PyTorch 范围: [-0.146256, 0.202770]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.202063, 0.293704]
+  PyTorch 范围: [-0.202063, 0.293704]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.001039, 0.108952]
+  PyTorch 范围: [0.001039, 0.108952]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.077200, 0.076955]
+  PyTorch 范围: [-0.077200, 0.076955]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.173295, 0.188040]
+  PyTorch 范围: [-0.173295, 0.188040]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.139449, 0.177332]
+  PyTorch 范围: [-0.139449, 0.177332]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.124209, 0.128966]
+  PyTorch 范围: [-0.124209, 0.128966]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.165095, 0.158270]
+  PyTorch 范围: [-0.165095, 0.158270]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.028893, 0.133681]
+  PyTorch 范围: [0.028893, 0.133681]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.082201, 0.085621]
+  PyTorch 范围: [-0.082201, 0.085621]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.232695, 0.272603]
+  PyTorch 范围: [-0.232695, 0.272603]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.055050, 0.123948]
+  PyTorch 范围: [-0.055050, 0.123948]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.11.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.152559, 0.155283]
+  PyTorch 范围: [-0.152559, 0.155283]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.132529, 0.115515]
+  PyTorch 范围: [-0.132529, 0.115515]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.233067, 0.263539]
+  PyTorch 范围: [-0.233067, 0.263539]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.007115, 0.199884]
+  PyTorch 范围: [-0.007115, 0.199884]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.080087, 0.081065]
+  PyTorch 范围: [-0.080087, 0.081065]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.436285, 0.363830]
+  PyTorch 范围: [-0.436285, 0.363830]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.258152, 0.242953]
+  PyTorch 范围: [-0.258152, 0.242953]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.251170, 0.199914]
+  PyTorch 范围: [-0.251170, 0.199914]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.140197, 0.130985]
+  PyTorch 范围: [-0.140197, 0.130985]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.007974, 0.238550]
+  PyTorch 范围: [-0.007974, 0.238550]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.067907, 0.064515]
+  PyTorch 范围: [-0.067907, 0.064515]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.265030, 0.287632]
+  PyTorch 范围: [-0.265030, 0.287632]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.094548, 0.075189]
+  PyTorch 范围: [-0.094548, 0.075189]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.12.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.158436, 0.150977]
+  PyTorch 范围: [-0.158436, 0.150977]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.082910, 0.070166]
+  PyTorch 范围: [-0.082910, 0.070166]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.343085, 0.198600]
+  PyTorch 范围: [-0.343085, 0.198600]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.005448, 0.082230]
+  PyTorch 范围: [-0.005448, 0.082230]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.055681, 0.062610]
+  PyTorch 范围: [-0.055681, 0.062610]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.170525, 0.161814]
+  PyTorch 范围: [-0.170525, 0.161814]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.154224, 0.169672]
+  PyTorch 范围: [-0.154224, 0.169672]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.096986, 0.085309]
+  PyTorch 范围: [-0.096986, 0.085309]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.108063, 0.105276]
+  PyTorch 范围: [-0.108063, 0.105276]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.043161, 0.133030]
+  PyTorch 范围: [0.043161, 0.133030]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.060390, 0.059107]
+  PyTorch 范围: [-0.060390, 0.059107]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.214809, 0.147611]
+  PyTorch 范围: [-0.214809, 0.147611]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031185, 0.031189]
+  PyTorch 范围: [-0.031185, 0.031189]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.2.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.068395, 0.067812]
+  PyTorch 范围: [-0.068395, 0.067812]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.260474, 0.232480]
+  PyTorch 范围: [-0.260474, 0.232480]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.011843, 0.099391]
+  PyTorch 范围: [-0.011843, 0.099391]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.057098, 0.058544]
+  PyTorch 范围: [-0.057098, 0.058544]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.166663, 0.192552]
+  PyTorch 范围: [-0.166663, 0.192552]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.133337, 0.124142]
+  PyTorch 范围: [-0.133337, 0.124142]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.092918, 0.128881]
+  PyTorch 范围: [-0.092918, 0.128881]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.114780, 0.103791]
+  PyTorch 范围: [-0.114780, 0.103791]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.039860, 0.075520]
+  PyTorch 范围: [0.039860, 0.075520]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.058254, 0.059349]
+  PyTorch 范围: [-0.058254, 0.059349]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.131349, 0.158240]
+  PyTorch 范围: [-0.131349, 0.158240]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031234, 0.031199]
+  PyTorch 范围: [-0.031234, 0.031199]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.3.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.076320, 0.070370]
+  PyTorch 范围: [-0.076320, 0.070370]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.214161, 0.215308]
+  PyTorch 范围: [-0.214161, 0.215308]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.028386, 0.079275]
+  PyTorch 范围: [-0.028386, 0.079275]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.062481, 0.060790]
+  PyTorch 范围: [-0.062481, 0.060790]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.252264, 0.292920]
+  PyTorch 范围: [-0.252264, 0.292920]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.151640, 0.116852]
+  PyTorch 范围: [-0.151640, 0.116852]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.163816, 0.086757]
+  PyTorch 范围: [-0.163816, 0.086757]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.104392, 0.101972]
+  PyTorch 范围: [-0.104392, 0.101972]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.038619, 0.088256]
+  PyTorch 范围: [0.038619, 0.088256]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.062703, 0.062294]
+  PyTorch 范围: [-0.062703, 0.062294]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.149020, 0.148753]
+  PyTorch 范围: [-0.149020, 0.148753]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.030949, 0.030983]
+  PyTorch 范围: [-0.030949, 0.030983]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.4.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.063389, 0.066846]
+  PyTorch 范围: [-0.063389, 0.066846]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.206505, 0.198080]
+  PyTorch 范围: [-0.206505, 0.198080]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.004801, 0.084675]
+  PyTorch 范围: [0.004801, 0.084675]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.063283, 0.069958]
+  PyTorch 范围: [-0.063283, 0.069958]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.175700, 0.148747]
+  PyTorch 范围: [-0.175700, 0.148747]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.151754, 0.155701]
+  PyTorch 范围: [-0.151754, 0.155701]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.099881, 0.122401]
+  PyTorch 范围: [-0.099881, 0.122401]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.118734, 0.085173]
+  PyTorch 范围: [-0.118734, 0.085173]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.051396, 0.110349]
+  PyTorch 范围: [0.051396, 0.110349]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.065690, 0.074901]
+  PyTorch 范围: [-0.065690, 0.074901]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.133259, 0.152168]
+  PyTorch 范围: [-0.133259, 0.152168]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031234, 0.031159]
+  PyTorch 范围: [-0.031234, 0.031159]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.5.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.086995, 0.094263]
+  PyTorch 范围: [-0.086995, 0.094263]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.189744, 0.146934]
+  PyTorch 范围: [-0.189744, 0.146934]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.006696, 0.093117]
+  PyTorch 范围: [-0.006696, 0.093117]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.077074, 0.071261]
+  PyTorch 范围: [-0.077074, 0.071261]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.217560, 0.240163]
+  PyTorch 范围: [-0.217560, 0.240163]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.132414, 0.096615]
+  PyTorch 范围: [-0.132414, 0.096615]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.080987, 0.094667]
+  PyTorch 范围: [-0.080987, 0.094667]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.115454, 0.087146]
+  PyTorch 范围: [-0.115454, 0.087146]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.074918, 0.106294]
+  PyTorch 范围: [0.074918, 0.106294]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.084865, 0.092648]
+  PyTorch 范围: [-0.084865, 0.092648]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.142052, 0.125773]
+  PyTorch 范围: [-0.142052, 0.125773]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.031227, 0.031208]
+  PyTorch 范围: [-0.031227, 0.031208]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.6.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.031250, 0.031250]
+  PyTorch 范围: [-0.031250, 0.031250]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.090813, 0.094044]
+  PyTorch 范围: [-0.090813, 0.094044]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.297851, 0.220134]
+  PyTorch 范围: [-0.297851, 0.220134]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.070416, 0.142308]
+  PyTorch 范围: [-0.070416, 0.142308]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.071939, 0.074265]
+  PyTorch 范围: [-0.071939, 0.074265]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.287917, 0.249695]
+  PyTorch 范围: [-0.287917, 0.249695]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.111005, 0.112804]
+  PyTorch 范围: [-0.111005, 0.112804]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.089558, 0.083264]
+  PyTorch 范围: [-0.089558, 0.083264]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.108872, 0.112343]
+  PyTorch 范围: [-0.108872, 0.112343]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.042754, 0.167704]
+  PyTorch 范围: [0.042754, 0.167704]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.079024, 0.078126]
+  PyTorch 范围: [-0.079024, 0.078126]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.229696, 0.262354]
+  PyTorch 范围: [-0.229696, 0.262354]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.189980, 0.077753]
+  PyTorch 范围: [-0.189980, 0.077753]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.7.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.179879, 0.117067]
+  PyTorch 范围: [-0.179879, 0.117067]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.094674, 0.088748]
+  PyTorch 范围: [-0.094674, 0.088748]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.118736, 0.174693]
+  PyTorch 范围: [-0.118736, 0.174693]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.008245, 0.134233]
+  PyTorch 范围: [0.008245, 0.134233]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.075209, 0.078467]
+  PyTorch 范围: [-0.075209, 0.078467]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.188668, 0.246222]
+  PyTorch 范围: [-0.188668, 0.246222]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.159264, 0.114998]
+  PyTorch 范围: [-0.159264, 0.114998]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.079657, 0.080611]
+  PyTorch 范围: [-0.079657, 0.080611]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.103982, 0.097817]
+  PyTorch 范围: [-0.103982, 0.097817]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.059387, 0.160458]
+  PyTorch 范围: [0.059387, 0.160458]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.084876, 0.082443]
+  PyTorch 范围: [-0.084876, 0.082443]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.328906, 0.309321]
+  PyTorch 范围: [-0.328906, 0.309321]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.167080, 0.063447]
+  PyTorch 范围: [-0.167080, 0.063447]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.8.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.153138, 0.135605]
+  PyTorch 范围: [-0.153138, 0.135605]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.attention.wo.weight
+  形状: (512, 512)
+  MLX 范围: [-0.104536, 0.128152]
+  PyTorch 范围: [-0.104536, 0.128152]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.attention.wqkv.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.187151, 0.222111]
+  PyTorch 范围: [-0.187151, 0.222111]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.attention_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.001622, 0.153671]
+  PyTorch 范围: [0.001622, 0.153671]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.attention_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.078569, 0.073589]
+  PyTorch 范围: [-0.078569, 0.073589]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.attention_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.173587, 0.191477]
+  PyTorch 范围: [-0.173587, 0.191477]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.feed_forward.w1.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.121379, 0.132557]
+  PyTorch 范围: [-0.121379, 0.132557]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.feed_forward.w2.weight
+  形状: (512, 1536)
+  MLX 范围: [-0.093455, 0.083292]
+  PyTorch 范围: [-0.093455, 0.083292]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.feed_forward.w3.weight
+  形状: (1536, 512)
+  MLX 范围: [-0.128287, 0.104965]
+  PyTorch 范围: [-0.128287, 0.104965]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.ffn_norm.norm.weight
+  形状: (512,)
+  MLX 范围: [0.051959, 0.119054]
+  PyTorch 范围: [0.051959, 0.119054]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.ffn_norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.087779, 0.078714]
+  PyTorch 范围: [-0.087779, 0.078714]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.ffn_norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.293940, 0.210686]
+  PyTorch 范围: [-0.293940, 0.210686]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.skip_in_linear.bias
+  形状: (512,)
+  MLX 范围: [-0.070937, 0.211285]
+  PyTorch 范围: [-0.070937, 0.211285]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.layers.9.skip_in_linear.weight
+  形状: (512, 1024)
+  MLX 范围: [-0.200734, 0.188294]
+  PyTorch 范围: [-0.200734, 0.188294]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.norm.norm.weight
+  形状: (512,)
+  MLX 范围: [-0.044370, 0.212610]
+  PyTorch 范围: [-0.044370, 0.212610]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.norm.project_layer.bias
+  形状: (1024,)
+  MLX 范围: [-0.073264, 0.076368]
+  PyTorch 范围: [-0.073264, 0.076368]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.transformer.norm.project_layer.weight
+  形状: (1024, 512)
+  MLX 范围: [-0.425275, 0.383737]
+  PyTorch 范围: [-0.425275, 0.383737]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.cond_layer.conv.conv.bias
+  形状: (8192,)
+  MLX 范围: [-0.095180, 0.048487]
+  PyTorch 范围: [-0.095180, 0.048487]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.cond_layer.conv.conv.weight_g
+  形状: (8192, 1, 1)
+  MLX 范围: [-0.024131, 0.197809]
+  PyTorch 范围: [-0.024131, 0.197809]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.cond_layer.conv.conv.weight_v
+  形状: (8192, 512, 1)
+  MLX 范围: [-0.206364, 0.211308]
+  PyTorch 范围: [-0.206364, 0.211308]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.0.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.043744, 0.034618]
+  PyTorch 范围: [-0.043744, 0.034618]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.0.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.033352, 1.218693]
+  PyTorch 范围: [0.033352, 1.218693]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.0.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.165127, 0.200454]
+  PyTorch 范围: [-0.165127, 0.200454]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.1.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.048257, 0.025747]
+  PyTorch 范围: [-0.048257, 0.025747]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.1.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.037580, 1.335680]
+  PyTorch 范围: [0.037580, 1.335680]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.1.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.176514, 0.175446]
+  PyTorch 范围: [-0.176514, 0.175446]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.2.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.048614, 0.037790]
+  PyTorch 范围: [-0.048614, 0.037790]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.2.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.036827, 1.254909]
+  PyTorch 范围: [0.036827, 1.254909]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.2.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.150319, 0.195228]
+  PyTorch 范围: [-0.150319, 0.195228]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.3.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.051651, 0.033377]
+  PyTorch 范围: [-0.051651, 0.033377]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.3.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.054236, 1.358940]
+  PyTorch 范围: [0.054236, 1.358940]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.3.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.183697, 0.187372]
+  PyTorch 范围: [-0.183697, 0.187372]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.4.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.048176, 0.029575]
+  PyTorch 范围: [-0.048176, 0.029575]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.4.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.043798, 1.142456]
+  PyTorch 范围: [0.043798, 1.142456]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.4.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.191803, 0.204398]
+  PyTorch 范围: [-0.191803, 0.204398]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.5.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.078456, 0.028095]
+  PyTorch 范围: [-0.078456, 0.028095]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.5.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.048814, 1.644300]
+  PyTorch 范围: [0.048814, 1.644300]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.5.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.140160, 0.129279]
+  PyTorch 范围: [-0.140160, 0.129279]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.6.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.075705, 0.048853]
+  PyTorch 范围: [-0.075705, 0.048853]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.6.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.064032, 1.795643]
+  PyTorch 范围: [0.064032, 1.795643]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.6.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.204328, 0.200112]
+  PyTorch 范围: [-0.204328, 0.200112]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.7.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.095282, 0.020456]
+  PyTorch 范围: [-0.095282, 0.020456]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.7.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.051742, 1.358262]
+  PyTorch 范围: [0.051742, 1.358262]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.in_layers.7.conv.conv.weight_v
+  形状: (1024, 512, 5)
+  MLX 范围: [-0.137005, 0.143187]
+  PyTorch 范围: [-0.137005, 0.143187]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.0.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.050627, 0.047643]
+  PyTorch 范围: [-0.050627, 0.047643]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.0.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.044478, 0.736419]
+  PyTorch 范围: [-0.044478, 0.736419]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.0.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.276024, 0.291038]
+  PyTorch 范围: [-0.276024, 0.291038]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.1.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.051420, 0.049803]
+  PyTorch 范围: [-0.051420, 0.049803]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.1.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.056271, 0.870981]
+  PyTorch 范围: [-0.056271, 0.870981]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.1.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.219549, 0.287262]
+  PyTorch 范围: [-0.219549, 0.287262]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.2.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.049977, 0.049863]
+  PyTorch 范围: [-0.049977, 0.049863]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.2.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.051954, 0.907148]
+  PyTorch 范围: [-0.051954, 0.907148]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.2.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.241858, 0.227722]
+  PyTorch 范围: [-0.241858, 0.227722]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.3.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.051162, 0.049707]
+  PyTorch 范围: [-0.051162, 0.049707]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.3.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.047288, 1.019320]
+  PyTorch 范围: [-0.047288, 1.019320]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.3.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.272839, 0.298615]
+  PyTorch 范围: [-0.272839, 0.298615]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.4.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.051520, 0.047594]
+  PyTorch 范围: [-0.051520, 0.047594]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.4.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.068978, 1.138728]
+  PyTorch 范围: [-0.068978, 1.138728]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.4.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.280143, 0.220127]
+  PyTorch 范围: [-0.280143, 0.220127]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.5.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.051490, 0.047644]
+  PyTorch 范围: [-0.051490, 0.047644]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.5.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [0.002489, 1.237535]
+  PyTorch 范围: [0.002489, 1.237535]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.5.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.280637, 0.269713]
+  PyTorch 范围: [-0.280637, 0.269713]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.6.conv.conv.bias
+  形状: (1024,)
+  MLX 范围: [-0.050326, 0.049641]
+  PyTorch 范围: [-0.050326, 0.049641]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.6.conv.conv.weight_g
+  形状: (1024, 1, 1)
+  MLX 范围: [-0.072088, 1.422755]
+  PyTorch 范围: [-0.072088, 1.422755]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.6.conv.conv.weight_v
+  形状: (1024, 512, 1)
+  MLX 范围: [-0.227161, 0.200082]
+  PyTorch 范围: [-0.227161, 0.200082]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.7.conv.conv.bias
+  形状: (512,)
+  MLX 范围: [-0.049985, 0.047848]
+  PyTorch 范围: [-0.049985, 0.047848]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.7.conv.conv.weight_g
+  形状: (512, 1, 1)
+  MLX 范围: [0.031409, 1.411388]
+  PyTorch 范围: [0.031409, 1.411388]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.wavenet.res_skip_layers.7.conv.conv.weight_v
+  形状: (512, 512, 1)
+  MLX 范围: [-0.223029, 0.183496]
+  PyTorch 范围: [-0.223029, 0.183496]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.x_embedder.bias
+  形状: (512,)
+  MLX 范围: [-0.111546, 0.111653]
+  PyTorch 范围: [-0.111546, 0.111653]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.x_embedder.weight_g
+  形状: (512, 1)
+  MLX 范围: [0.472280, 0.662982]
+  PyTorch 范围: [0.472280, 0.662982]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+
+权重: cfm.estimator.x_embedder.weight_v
+  形状: (512, 80)
+  MLX 范围: [-0.111803, 0.111800]
+  PyTorch 范围: [-0.111803, 0.111800]
+  最大差异: 0.00e+00
+  平均差异: 0.00e+00
+  相对差异: 0.00e+00
+

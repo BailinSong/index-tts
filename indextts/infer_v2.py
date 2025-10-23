@@ -239,6 +239,9 @@ class IndexTTS2:
                     n_f0_bins=self.cfg.s2mel.length_regulator.n_f0_bins if hasattr(self.cfg.s2mel.length_regulator, "n_f0_bins") else 512,
                 )
                 
+                # Create MLX CFM
+                self.mlx_s2mel_cfm = MLXCFM(self.cfg.s2mel)
+                
                 print(">> S2MEL MLX modules created successfully")
             except Exception as e:
                 print(f">> S2MEL MLX modules creation failed: {e}")
@@ -269,40 +272,51 @@ class IndexTTS2:
                 s2mel_state_dict = self.s2mel.state_dict()
                 s2mel_state_dict_np = {k: v.cpu().numpy() for k, v in s2mel_state_dict.items()}
                 
-                # Load gpt_layer weights (lightweight, no need to cache separately)
+                # Load gpt_layer weights and prepare for unified caching
                 if self.mlx_s2mel_gpt_layer is not None:
                     self.mlx_s2mel_gpt_layer.load_weights_from_pytorch(s2mel_state_dict_np)
                 
-                # Load length_regulator weights (lightweight, no need to cache separately)
+                # Load length_regulator weights and prepare for unified caching
                 if self.mlx_s2mel_length_regulator is not None:
                     self.mlx_s2mel_length_regulator.load_weights_from_pytorch(s2mel_state_dict_np)
                 
-                # 🔥 CFM: 检查缓存，首次运行则转换并缓存
+                # 🔥 CFM: 从统一的 s2mel.npz 加载权重
                 if self.mlx_s2mel_cfm is not None:
-                    cfm_cache_file = os.path.join(self.mlx_cache.cache_dir, "s2mel_cfm.npz")
+                    s2mel_cache_file = os.path.join(self.mlx_cache.cache_dir, "s2mel.npz")
                     
-                    if os.path.exists(cfm_cache_file):
-                        # 从缓存加载
-                        print(">> Loading S2MEL CFM from cache...")
-                        print(f"   Cache: {cfm_cache_file}")
+                    if os.path.exists(s2mel_cache_file):
+                        # 从统一的 s2mel.npz 加载 CFM 权重
+                        print(">> Loading S2MEL CFM from unified cache...")
+                        print(f"   Cache: {s2mel_cache_file}")
                         
                         try:
                             import mlx.core as mx
-                            cfm_weights = mx.load(cfm_cache_file)
+                            s2mel_weights = mx.load(s2mel_cache_file)
+                            
+                            # 提取 CFM 权重
+                            cfm_weights = {}
+                            for key, value in s2mel_weights.items():
+                                if key.startswith('models.cfm.'):
+                                    # 移除 models. 前缀，只保留 cfm. 前缀
+                                    cfm_key = key.replace('models.cfm.', 'cfm.')
+                                    cfm_weights[cfm_key] = value
+                            
+                            print(f"   Extracted {len(cfm_weights)} CFM weights from s2mel.npz")
+                            
                             # Load weights into CFM
                             self.mlx_s2mel_cfm.load_from_cache(cfm_weights)
                             
                             # Get cache size
-                            size_mb = os.path.getsize(cfm_cache_file) / (1024 * 1024)
+                            size_mb = os.path.getsize(s2mel_cache_file) / (1024 * 1024)
                             print(f"   Size: {size_mb:.2f} MB")
-                            print(">> ✓ Loaded from cache (fast!)")
+                            print(">> ✓ Loaded from unified cache (fast!)")
                         except Exception as e:
-                            print(f">> ✗ Cache loading failed: {e}")
+                            print(f">> ✗ Unified cache loading failed: {e}")
                             print(">> Converting from PyTorch...")
                             self.mlx_s2mel_cfm.load_weights_from_pytorch(s2mel_state_dict_np, prefix="models.cfm.")
                     else:
-                        # 首次运行：转换并缓存
-                        print(">> S2MEL CFM cache not found (first run)")
+                        # 首次运行：转换并缓存到统一的 s2mel.npz
+                        print(">> S2MEL unified cache not found (first run)")
                         print(">> Converting PyTorch CFM to MLX and caching...")
                         print("   ⏳ This will take a few minutes on first run...")
                         
@@ -311,21 +325,17 @@ class IndexTTS2:
                             loaded = self.mlx_s2mel_cfm.load_weights_from_pytorch(s2mel_state_dict_np, prefix="models.cfm.")
                             print(f">> Loaded {loaded} weights")
                             
-                            # Extract and cache weights
-                            print(">> Caching weights for future runs...")
+                            # Extract and cache weights to unified s2mel.npz
+                            print(">> Caching weights to unified s2mel.npz...")
                             cfm_weights_to_cache = self.mlx_s2mel_cfm.extract_weights_for_cache()
                             
-                            # Save to cache
-                            os.makedirs(self.mlx_cache.cache_dir, exist_ok=True)
-                            import mlx.core as mx
-                            mx.savez(cfm_cache_file, **cfm_weights_to_cache)
-                            
-                            size_mb = os.path.getsize(cfm_cache_file) / (1024 * 1024)
-                            print(f">> ✓ Cached to {cfm_cache_file}")
-                            print(f"   Size: {size_mb:.2f} MB")
-                            print(">> Next run will load from cache (much faster!)")
+                            # 使用 MLXModelCache 的 convert_and_cache 方法
+                            print(">> Using MLXModelCache to save S2MEL weights...")
+                            self.mlx_cache.convert_and_cache("s2mel", state_dict=s2mel_state_dict)
+                            print(">> ✓ S2MEL weights cached successfully")
+                            print(">> Next run will load from unified cache (much faster!)")
                         except Exception as e:
-                            print(f">> ✗ Conversion/caching failed: {e}")
+                            print(f">> ✗ CFM conversion failed: {e}")
                             print(">> CFM will use PyTorch fallback")
                             import traceback
                             traceback.print_exc()
@@ -1007,6 +1017,21 @@ class IndexTTS2:
                                 )
                                 print(f">> [MLX Consistency] Using MLX get_conditioning for PyTorch-MLX consistency")
                                 
+                                # 调试：记录MLX GPT生成后的输出
+                                print(f">> [MLX GPT Debug] GPT生成后:")
+                                print(f"   codes: {codes.shape}, min={codes.min():.6f}, max={codes.max():.6f}")
+                                print(f"   speech_conditioning_latent: {speech_conditioning_latent.shape}, min={speech_conditioning_latent.min():.6f}, max={speech_conditioning_latent.max():.6f}")
+                                
+                                # 保存MLX GPT输出到文件
+                                import pickle
+                                gpt_outputs_mlx = {
+                                    'codes': codes.detach().cpu(),
+                                    'speech_conditioning_latent': speech_conditioning_latent.detach().cpu()
+                                }
+                                with open('gpt_outputs_mlx.pkl', 'wb') as f:
+                                    pickle.dump(gpt_outputs_mlx, f)
+                                print(f">> [MLX GPT Debug] GPT输出已保存到 gpt_outputs_mlx.pkl")
+                                
                                 # 🔥 关键：缓存MLX格式
                                 if cond_latent_mlx is not None:
                                     self.cache_gpt_conditioning_latent_mlx = cond_latent_mlx
@@ -1045,6 +1070,21 @@ class IndexTTS2:
                             max_generate_length=max_mel_tokens,
                             **generation_kwargs
                         )
+                        
+                        # 调试：记录MLX GPT生成后的输出
+                        print(f">> [MLX GPT Debug] GPT生成后:")
+                        print(f"   codes: {codes.shape}, min={codes.min():.6f}, max={codes.max():.6f}")
+                        print(f"   speech_conditioning_latent: {speech_conditioning_latent.shape}, min={speech_conditioning_latent.min():.6f}, max={speech_conditioning_latent.max():.6f}")
+                        
+                        # 保存MLX GPT输出到文件
+                        import pickle
+                        gpt_outputs_mlx = {
+                            'codes': codes.detach().cpu(),
+                            'speech_conditioning_latent': speech_conditioning_latent.detach().cpu()
+                        }
+                        with open('gpt_outputs_mlx.pkl', 'wb') as f:
+                            pickle.dump(gpt_outputs_mlx, f)
+                        print(f">> [MLX GPT Debug] GPT输出已保存到 gpt_outputs_mlx.pkl")
 
                 gpt_gen_time += time.perf_counter() - m_start_time
                 self._print_mps_memory(f"GPT生成后(段落{seg_idx+1})")
@@ -1182,11 +1222,108 @@ class IndexTTS2:
                     
                     # Profiling: CFM diffusion
                     t0 = time.perf_counter()
-                    vc_target = self.s2mel.models['cfm'].inference(cat_condition,
-                                                                   torch.LongTensor([cat_condition.size(1)]).to(
-                                                                       cond.device),
-                                                                   ref_mel, style, None, diffusion_steps,
-                                                                   inference_cfg_rate=inference_cfg_rate)
+                    # 捕获S2MEL输入数据用于测试
+                    s2mel_inputs = {
+                        'cat_condition': cat_condition.clone(),
+                        'x_lens': torch.LongTensor([cat_condition.size(1)]).to(cond.device),
+                        'ref_mel': ref_mel.clone(),
+                        'style': style.clone(),
+                        'diffusion_steps': diffusion_steps,
+                        'inference_cfg_rate': inference_cfg_rate
+                    }
+                    self._s2mel_inputs = s2mel_inputs
+                    
+                    if self.use_mlx and self.mlx_s2mel_cfm is not None:
+                        # MLX版本CFM
+                        import mlx.core as mx
+                        from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
+                        
+                        # 调试：记录MLX CFM输入
+                        print(f">> [MLX CFM Debug] CFM输入:")
+                        print(f"   cat_condition: {cat_condition.shape}, min={cat_condition.min():.6f}, max={cat_condition.max():.6f}")
+                        print(f"   x_lens: {cat_condition.size(1)}")
+                        print(f"   ref_mel: {ref_mel.shape}, min={ref_mel.min():.6f}, max={ref_mel.max():.6f}")
+                        print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
+                        print(f"   diffusion_steps: {diffusion_steps}")
+                        print(f"   inference_cfg_rate: {inference_cfg_rate}")
+                        
+                        # 转换输入到MLX
+                        cat_condition_mlx = torch_to_mlx(cat_condition)
+                        x_lens_mlx = torch_to_mlx(torch.LongTensor([cat_condition.size(1)]).to(cond.device))
+                        ref_mel_mlx = torch_to_mlx(ref_mel)
+                        style_mlx = torch_to_mlx(style)
+                        
+                        # 保存MLX CFM输入到文件
+                        import pickle
+                        cfm_inputs_mlx = {
+                            'cat_condition': cat_condition.detach().cpu(),
+                            'x_lens': torch.LongTensor([cat_condition.size(1)]),
+                            'ref_mel': ref_mel.detach().cpu(),
+                            'style': style.detach().cpu(),
+                            'diffusion_steps': diffusion_steps,
+                            'inference_cfg_rate': inference_cfg_rate
+                        }
+                        with open('cfm_inputs_mlx.pkl', 'wb') as f:
+                            pickle.dump(cfm_inputs_mlx, f)
+                        print(f">> [MLX CFM Debug] CFM输入已保存到 cfm_inputs_mlx.pkl")
+                        
+                        # 🔥 使用 MLX CFM 进行推理
+                        print(">> [MLX CFM Debug] 使用 MLX CFM 进行推理")
+                        
+                        # 使用 MLX CFM 推理
+                        vc_target_mlx = self.mlx_s2mel_cfm.inference(
+                            cat_condition_mlx,
+                            x_lens_mlx,
+                            ref_mel_mlx, 
+                            style_mlx, 
+                            None, 
+                            diffusion_steps,
+                            inference_cfg_rate=inference_cfg_rate
+                        )
+                        
+                        print(f">> [MLX CFM Debug] MLX CFM 输出:")
+                        print(f"   vc_target: {vc_target_mlx.shape}, min={vc_target_mlx.min():.6f}, max={vc_target_mlx.max():.6f}")
+                        print(f"   vc_target mean: {vc_target_mlx.mean():.6f}, std: {vc_target_mlx.std():.6f}")
+                        
+                        # 将 MLX 输出转换为 PyTorch tensor
+                        vc_target = mlx_to_torch(vc_target_mlx).to(self.device)
+                        
+                        print(f">> [MLX CFM Debug] 转换后的 PyTorch 输出:")
+                        print(f"   vc_target: {vc_target.shape}, min={vc_target.min():.6f}, max={vc_target.max():.6f}")
+                        print(f"   vc_target mean: {vc_target.mean():.6f}, std: {vc_target.std():.6f}")
+                        
+                        # 保存 MLX CFM 输出到文件
+                        cfm_outputs_mlx = {
+                            'vc_target': vc_target.detach().cpu()
+                        }
+                        with open('cfm_outputs_mlx.pkl', 'wb') as f:
+                            pickle.dump(cfm_outputs_mlx, f)
+                        print(f">> [MLX CFM Debug] MLX CFM 输出已保存到 cfm_outputs_mlx.pkl")
+                        
+                        # 捕获 MLX S2MEL 输出用于调试
+                        self._s2mel_outputs = {
+                            'vc_target_shape': vc_target.shape,
+                            'vc_target_min': vc_target.min().item(),
+                            'vc_target_max': vc_target.max().item(),
+                            'vc_target_mean': vc_target.mean().item(),
+                            'vc_target_std': vc_target.std().item()
+                        }
+                    else:
+                        # PyTorch版本CFM
+                        vc_target = self.s2mel.models['cfm'].inference(cat_condition,
+                                                                       torch.LongTensor([cat_condition.size(1)]).to(
+                                                                           cond.device),
+                                                                       ref_mel, style, None, diffusion_steps,
+                                                                       inference_cfg_rate=inference_cfg_rate)
+                        
+                        # 捕获PyTorch S2MEL输出用于调试
+                        self._s2mel_outputs = {
+                            'vc_target_shape': vc_target.shape,
+                            'vc_target_min': vc_target.min().item(),
+                            'vc_target_max': vc_target.max().item(),
+                            'vc_target_mean': vc_target.mean().item(),
+                            'vc_target_std': vc_target.std().item()
+                        }
                     t_cfm = time.perf_counter() - t0
                     vc_target = vc_target[:, :, ref_mel.size(-1):]
                     s2mel_time += time.perf_counter() - m_start_time

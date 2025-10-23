@@ -27,9 +27,20 @@ def load_weight_norm(state_dict, prefix):
         v = state_dict[v_key]
         
         # Compute weight: w = g * v / ||v||
-        # Norm over all dims except first (output dim)
-        axes = tuple(range(1, len(v.shape)))
-        norm_v = np.linalg.norm(v, axis=axes, keepdims=True)
+        # For Conv1d: v is (O, I, K), norm over (I, K) i.e. dims (1, 2)
+        # For Linear: v is (O, I), norm over (I) i.e. dim (1,)
+        # Generally: norm over all dims except first (output dim)
+        if len(v.shape) == 3:
+            # Conv1d: (O, I, K) - norm over (1, 2)
+            norm_v = np.sqrt(np.sum(v**2, axis=(1, 2), keepdims=True))
+        elif len(v.shape) == 2:
+            # Linear: (O, I) - norm over (1,)
+            norm_v = np.sqrt(np.sum(v**2, axis=1, keepdims=True))
+        else:
+            # General case
+            axes = tuple(range(1, len(v.shape)))
+            norm_v = np.sqrt(np.sum(v**2, axis=axes, keepdims=True))
+        
         w = g * v / (norm_v + 1e-8)
         
         return w

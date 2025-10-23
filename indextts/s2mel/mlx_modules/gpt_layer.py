@@ -41,4 +41,21 @@ class MLXGPTLayer(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         return x
+    
+    def extract_weights_for_cache(self):
+        """
+        Extract all MLX weights from GPT Layer for caching.
+        
+        Returns:
+            dict of {name: mx.array} suitable for mx.savez()
+        """
+        weights = {}
+        
+        # Extract weights from each layer
+        for layer_name, layer_params in self.parameters().items():
+            for param_name, param_value in layer_params.items():
+                full_name = f"gpt_layer.{layer_name}.{param_name}"
+                weights[full_name] = param_value
+        
+        return weights
 

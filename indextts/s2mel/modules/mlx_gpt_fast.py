@@ -100,16 +100,18 @@ class MLXAdaptiveLayerNorm(nn.Module):
             return self.norm(x)
         
         # Project embedding to get weight and bias
-        projected = self.project_layer(embedding)  # (batch, 2*d_model)
+        projected = self.project_layer(embedding)  # (batch, ..., 2*d_model)
         
-        # Split
-        weight = projected[:, :self.d_model]  # (batch, d_model)
-        bias = projected[:, self.d_model:]  # (batch, d_model)
+        # Split along last dimension
+        weight = projected[..., :self.d_model]
+        bias = projected[..., self.d_model:]
         
-        # Apply adaptive normalization
-        # Broadcast weight and bias: (batch, d_model) -> (batch, 1, d_model)
-        weight = weight.reshape(-1, 1, self.d_model)
-        bias = bias.reshape(-1, 1, self.d_model)
+        # Ensure correct shape for broadcasting with x (batch, seq_len, d_model)
+        # If weight is (batch, d_model), reshape to (batch, 1, d_model)
+        # If weight is (batch, 1, d_model), keep as is
+        if weight.ndim == 2:
+            weight = weight[:, None, :]  # (batch, d_model) -> (batch, 1, d_model)
+            bias = bias[:, None, :]
         
         return weight * self.norm(x) + bias
 
@@ -428,7 +430,7 @@ class MLXTransformerGPTFast(nn.Module):
         """
         # Get position indices if not provided
         if input_pos is None:
-            input_pos = mx.arange(x.shape[1])
+            input_pos = mx.arange(x.shape[1], dtype=mx.int32)
         
         # Get freqs for current positions
         freqs_cis = self.freqs_cis[input_pos]  # (seq_len, head_dim//2, 2)

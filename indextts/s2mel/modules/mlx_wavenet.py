@@ -205,12 +205,23 @@ class MLXWaveNet(nn.Module):
             # For stride=1: padding_total = kernel_size - 1
             dilation = self.dilation_rate ** i
             effective_kernel_size = (self.kernel_size - 1) * dilation + 1
-            padding_total = effective_kernel_size - 1  # stride=1
+            stride = 1  # WaveNet always uses stride=1
+            padding_total = effective_kernel_size - stride
+            
+            # Calculate extra_padding (from encodec)
+            # See indextts/s2mel/modules/encodec.py:get_extra_padding_for_conv1d
+            length = x_masked.shape[1]  # seq_len
+            n_frames = (length - effective_kernel_size + padding_total) / stride + 1
+            import math
+            ideal_length = (math.ceil(n_frames) - 1) * stride + (effective_kernel_size - padding_total)
+            extra_padding = ideal_length - length
+            
+            # Asymmetric padding
             padding_right = padding_total // 2
             padding_left = padding_total - padding_right
             
-            # Apply reflect padding
-            x_padded = mlx_pad_reflect_1d(x_masked, padding_left, padding_right)
+            # Apply reflect padding (including extra_padding on the right)
+            x_padded = mlx_pad_reflect_1d(x_masked, padding_left, padding_right + extra_padding)
             
             # Apply convolution (padding=0 since we manually padded)
             x_in = self.in_layers[i](x_padded)  # (batch, seq_len, 2*hidden_channels)
@@ -225,8 +236,8 @@ class MLXWaveNet(nn.Module):
             # Fused gated activation
             acts = fused_add_tanh_sigmoid_multiply_mlx(x_in, g_l, self.hidden_channels)
             
-            # Dropout
-            acts = self.dropout(acts)
+            # Dropout (disabled to match PyTorch eval behavior)
+            acts = acts
             
             # Residual/skip connection
             res_skip_acts = self.res_skip_layers[i](acts)

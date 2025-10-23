@@ -49,6 +49,8 @@ class BASECFM(torch.nn.Module, ABC):
                 shape: (batch_size, 80, mel_timesteps)
         """
         B, T = mu.size(0), mu.size(1)
+        # 确保使用固定的随机种子
+        torch.manual_seed(42)
         z = torch.randn([B, self.in_channels, T], device=mu.device) * temperature
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
         # t_span = t_span + (-1) * (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)

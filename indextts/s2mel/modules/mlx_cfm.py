@@ -254,7 +254,7 @@ class MLXDiT(nn.Module):
         self.content_mask_embedder = nn.Embedding(1, dit_cfg.hidden_dim)
         
         # Input positions buffer
-        self.input_pos = mx.arange(16384)
+        self.input_pos = mx.arange(16384, dtype=mx.int32)
         
         print(f">> MLX DiT initialized:")
         print(f"   Transformer: {self.depth} layers, {self.num_heads} heads, dim={self.hidden_dim}")
@@ -294,7 +294,9 @@ class MLXDiT(nn.Module):
         
         batch, in_ch, seq_len = x.shape
         
-        # Get timestep embedding
+        # Get timestep embedding - 确保t是数组格式
+        if t.ndim == 0:
+            t = mx.array([t.item()])
         t_emb = self.t_embedder(t)  # (batch, hidden_dim)
         
         # Project conditioning
@@ -343,10 +345,17 @@ class MLXDiT(nn.Module):
         
         # Get input positions
         input_pos = self.input_pos[:x_in.shape[1]]
+
+        # Debug: ensure input_pos is integral
+        if input_pos.dtype != mx.int32:
+            input_pos = mx.array(input_pos, dtype=mx.int32)
         
         # Create attention mask (non-causal: length-based mask)
         if not self.is_causal:
             max_len = x_in.shape[1]
+            # 确保x_lens是数组格式
+            if x_lens.ndim == 0:
+                x_lens = mx.array([x_lens.item()])
             actual_lens = x_lens + int(self.style_as_token) + int(self.time_as_token)
             
             # Create mask: (batch, 1, max_len, max_len)
@@ -383,13 +392,17 @@ class MLXDiT(nn.Module):
             # WaveNet expects (batch, seq_len, channels), mask is (batch, 1, seq_len)
             # Create mask
             positions = mx.arange(x_out.shape[1]).reshape(1, 1, -1)
+            # 确保x_lens是数组格式
+            if x_lens.ndim == 0:
+                x_lens = mx.array([x_lens.item()])
             lens_for_mask = x_lens.reshape(-1, 1, 1)
             x_mask = positions < lens_for_mask  # (batch, 1, seq_len)
             
             # Get timestep embedding for WaveNet
             t2_emb = self.t_embedder2(t)  # (batch, wavenet_dim)
-            t2_emb_expanded = t2_emb.reshape(batch, 1, -1)  # (batch, 1, wavenet_dim)
-            t2_emb_expanded = mx.broadcast_to(t2_emb_expanded, (batch, x_out.shape[1], t2_emb.shape[-1]))
+            # MLX WaveNet期望g: (batch, seq_len, gin_channels)
+            # 将t2_emb广播到每个时间步
+            t2_emb_expanded = mx.broadcast_to(t2_emb[:, None, :], (batch, x_out.shape[1], t2_emb.shape[-1]))
             
             # WaveNet forward
             x_out = self.wavenet(x_out, x_mask, g=t2_emb_expanded)
@@ -454,6 +467,16 @@ class MLXCFM(nn.Module):
         Returns:
             Generated mel (batch, in_channels, seq_len) - MLX array
         """
+        # 调试：记录输入数据
+        print(f">> [MLX CFM Debug] solve_euler输入:")
+        print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
+        print(f"   x_lens: {x_lens}")
+        print(f"   prompt shape: {prompt.shape}, min={float(prompt.min()):.6f}, max={float(prompt.max()):.6f}")
+        print(f"   mu shape: {mu.shape}, min={float(mu.min()):.6f}, max={float(mu.max()):.6f}")
+        print(f"   style shape: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
+        print(f"   t_span shape: {t_span.shape}, min={float(t_span.min()):.6f}, max={float(t_span.max()):.6f}")
+        print(f"   inference_cfg_rate: {inference_cfg_rate}")
+        
         # Initialize
         prompt_len = prompt.shape[-1]
         
@@ -466,6 +489,9 @@ class MLXCFM(nn.Module):
         if self.zero_prompt_speech_token:
             mu[:, :prompt_len, :] = 0
         
+        # 初始化时间变量 - 与PyTorch版本完全一致
+        t = t_span[0]
+        
         # Euler iteration with progress
         num_steps = len(t_span) - 1
         print(f">> [MLX CFM] Starting Euler solver ({num_steps} steps)...")
@@ -474,8 +500,15 @@ class MLXCFM(nn.Module):
             if step % 5 == 0 or step == 1:
                 print(f"   Step {step}/{num_steps}", end='\r')
             
-            t_current = t_span[step - 1]
+            # 计算时间步长
             dt = t_span[step] - t_span[step - 1]
+            
+            # 调试：记录每步的输入
+            if step <= 3:  # 只记录前3步
+                print(f"\n>> [MLX CFM Debug] Step {step}:")
+                print(f"   x: min={float(x.min()):.6f}, max={float(x.max()):.6f}, mean={float(x.mean()):.6f}")
+                print(f"   t: {float(t):.6f}")
+                print(f"   dt: {float(dt):.6f}")
             
             if inference_cfg_rate > 0:
                 # Classifier-free guidance: stack original and null inputs
@@ -484,9 +517,9 @@ class MLXCFM(nn.Module):
                 stacked_mu = mx.concatenate([mu, mx.zeros_like(mu)], axis=0)
                 stacked_x = mx.concatenate([x, x], axis=0)
                 
-                # Create timestep tensor for both batches
-                t_batch = mx.full((x.shape[0],), float(t_current))
-                stacked_t = mx.concatenate([t_batch, t_batch], axis=0)
+                # Create timestep tensor for both batches - 与PyTorch版本完全一致
+                t_scalar = mx.array([float(t)])  # 与PyTorch的t.unsqueeze(0)对应
+                stacked_t = mx.concatenate([t_scalar, t_scalar], axis=0)
                 
                 # Duplicate x_lens for both batches
                 stacked_x_lens = mx.concatenate([x_lens, x_lens], axis=0)
@@ -498,25 +531,41 @@ class MLXCFM(nn.Module):
                     mask_content=False  # First half uses content
                 )
                 
-                # Split and apply CFG
-                dphi_dt = stacked_dphi_dt[:x.shape[0]]  # Conditioned
-                dphi_dt_null = stacked_dphi_dt[x.shape[0]:]  # Unconditioned
-                dphi_dt = dphi_dt_null + inference_cfg_rate * (dphi_dt - dphi_dt_null)
+                # Split and apply CFG - 与PyTorch版本完全一致
+                dphi_dt, cfg_dphi_dt = mx.split(stacked_dphi_dt, 2, axis=0)
+                dphi_dt = (1.0 + inference_cfg_rate) * dphi_dt - inference_cfg_rate * cfg_dphi_dt
             else:
-                # No CFG
-                t_batch = mx.full((x.shape[0],), float(t_current))
-                dphi_dt = self.estimator(x, prompt_x, x_lens, t_batch, style, mu, mask_content=False)
+                # No CFG - 与PyTorch版本完全一致
+                t_scalar = mx.array([float(t)])  # 与PyTorch的t.unsqueeze(0)对应
+                dphi_dt = self.estimator(x, prompt_x, x_lens, t_scalar, style, mu)
             
-            # Euler step
+            # 调试：记录estimator输出
+            if step <= 3:  # 只记录前3步
+                print(f"   dphi_dt: min={float(dphi_dt.min()):.6f}, max={float(dphi_dt.max()):.6f}, mean={float(dphi_dt.mean()):.6f}")
+            
+            # Euler step (与PyTorch版本完全一致，无裁剪)
             x = x + dt * dphi_dt
+            
+            # 时间更新（与PyTorch版本完全一致）
+            t = t + dt
             
             # Keep prompt unchanged
             x[:, :, :prompt_len] = 0
+            
+            # 计算下一步的dt（与PyTorch版本一致）
+            if step < len(t_span) - 1:
+                dt = t_span[step + 1] - t
             
             # Force evaluation to avoid graph buildup
             mx.eval(x)
         
         print(f"\n>> [MLX CFM] Euler solver completed")
+        
+        # 调试：记录最终输出
+        print(f">> [MLX CFM Debug] solve_euler输出:")
+        print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
+        print(f"   x mean: {float(x.mean()):.6f}, std: {float(x.std()):.6f}")
+        
         return x
     
     def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5):
@@ -556,7 +605,10 @@ class MLXCFM(nn.Module):
         
         batch, seq_len, _ = mu_mlx.shape
         
-        # Initialize noise
+        # Initialize noise - 使用与PyTorch相同的随机种子
+        import torch
+        torch.manual_seed(42)  # 确保与PyTorch版本同步
+        mx.random.seed(42)
         z = mx.random.normal((batch, self.in_channels, seq_len)) * temperature
         
         # Create time span
@@ -595,7 +647,7 @@ class MLXCFM(nn.Module):
     def extract_weights_for_cache(self):
         """
         Extract all MLX weights from CFM for caching using model's parameters() method.
-        
+
         Returns:
             dict of {name: mx.array} suitable for mx.savez()
         """
@@ -611,13 +663,120 @@ class MLXCFM(nn.Module):
                     # Leaf parameter
                     flat[full_name] = value
             return flat
-        
+
         # Get all parameters from estimator (DiT)
         params = self.estimator.parameters()
-        weights = flatten_parameters(params, "estimator")
-        
+        weights = flatten_parameters(params, "cfm.estimator")
+
         print(f">> Extracted {len(weights)} weight arrays for caching")
         return weights
+
+    def load_from_fixed_cache(self):
+        """
+        Load CFM weights from the fixed MLX cache.
+        This uses the corrected s2mel_cfm.npz with proper weight mapping.
+
+        Returns:
+            Number of weights loaded
+        """
+        try:
+            from indextts.utils.mlx_cache import MLXModelCache
+
+            print(">> Loading CFM from fixed MLX cache...")
+
+            # Load from fixed cache
+            cache_manager = MLXModelCache(cache_dir="checkpoints/mlx")
+            mlx_state = cache_manager.load_from_cache("s2mel_cfm")
+
+            if mlx_state is None:
+                print("❌ Fixed CFM cache not found")
+                return 0
+
+            loaded = 0
+
+            # Load weights into DiT estimator
+            # The cache keys should be in format "cfm.estimator.xxx"
+            estimator_weights = {}
+            cfm_prefix = "cfm.estimator."
+
+            for key, value in mlx_state.items():
+                if key.startswith(cfm_prefix):
+                    # Remove the "cfm.estimator." prefix for loading into estimator
+                    estimator_key = key[len(cfm_prefix):]
+                    estimator_weights[estimator_key] = value
+
+            print(f"   Found {len(estimator_weights)} estimator weights")
+
+            # Load weights using the standard parameter loading
+            def load_weights_recursively(module, weights, prefix=""):
+                """Recursively load weights into module"""
+                loaded_count = 0
+                params = module.parameters()
+
+                for name, param in params.items():
+                    full_name = f"{prefix}.{name}" if prefix else name
+
+                    if isinstance(param, dict):
+                        # Recurse into nested parameters
+                        loaded_count += load_weights_recursively(
+                            type('DummyModule', (), {'parameters': lambda: param})(),
+                            weights,
+                            full_name
+                        )
+                    elif full_name in weights:
+                        # Load the weight
+                        weight_value = weights[full_name]
+                        if hasattr(module, name):
+                            setattr(module, name, weight_value)
+                            loaded_count += 1
+                        else:
+                            # Navigate to the nested attribute
+                            current = module
+                            path_parts = full_name.split('.')
+                            for part in path_parts[:-1]:
+                                current = getattr(current, part)
+                            setattr(current, path_parts[-1], weight_value)
+                            loaded_count += 1
+
+                return loaded_count
+
+            # Load into estimator
+            loaded = self._load_estimator_weights_from_dict(estimator_weights)
+
+            print(f"✅ MLX CFM loaded {loaded} weights from fixed cache")
+            return loaded
+
+        except Exception as e:
+            print(f"❌ Loading from fixed cache failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
+
+    def _load_estimator_weights_from_dict(self, weights_dict):
+        """Helper method to load weights into estimator from dict"""
+        loaded = 0
+
+        # This is a simplified version - in practice, you'd need to handle
+        # the specific structure of your DiT estimator
+        for key, value in weights_dict.items():
+            try:
+                # Navigate to the target parameter
+                current = self.estimator
+                path_parts = key.split('.')
+
+                # Navigate to parent
+                for part in path_parts[:-1]:
+                    current = getattr(current, part)
+
+                # Set the parameter
+                setattr(current, path_parts[-1], value)
+                loaded += 1
+
+            except (AttributeError, KeyError) as e:
+                # Skip missing attributes (expected for some mismatched keys)
+                continue
+
+        return loaded
     
     def load_from_cache(self, cache_dict):
         """

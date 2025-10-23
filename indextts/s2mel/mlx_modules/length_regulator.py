@@ -271,6 +271,29 @@ class MLXInterpolateRegulator(nn.Module):
         
         # Return format compatible with PyTorch version
         return out, olens, None, None, None
+    
+    def extract_weights_for_cache(self):
+        """
+        Extract all MLX weights from Length Regulator for caching.
+        
+        Returns:
+            dict of {name: mx.array} suitable for mx.savez()
+        """
+        weights = {}
+        
+        # Extract weights from each component
+        for component_name, component_params in self.parameters().items():
+            if isinstance(component_params, dict):
+                # Handle nested parameters
+                for param_name, param_value in component_params.items():
+                    full_name = f"length_regulator.{component_name}.{param_name}"
+                    weights[full_name] = param_value
+            else:
+                # Handle direct parameters
+                full_name = f"length_regulator.{component_name}"
+                weights[full_name] = component_params
+        
+        return weights
 
 
 def f0_to_coarse_mlx(f0: mx.array, f0_bin: int) -> mx.array:
