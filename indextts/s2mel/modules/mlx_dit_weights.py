@@ -111,6 +111,16 @@ def load_dit_weights(mlx_dit, pytorch_state_dict, prefix="models.cfm.estimator."
             mlx_dit.cond_embedder.weight = mx.array(pytorch_weight)
             loaded += 1
             print(f"   ✅ Loaded cond_embedder.weight: {pytorch_weight.shape}, range: [{pytorch_weight.min():.6f}, {pytorch_weight.max():.6f}]")
+            
+            # 验证权重是否正确加载
+            mlx_weight = mlx_dit.cond_embedder.weight
+            weight_diff = np.abs(pytorch_weight - mlx_weight)
+            print(f"   🔍 权重验证: 最大差异={weight_diff.max():.6f}, 平均差异={weight_diff.mean():.6f}")
+            
+            if weight_diff.max() > 1e-6:
+                print(f"   ❌ 权重加载验证失败，差异过大")
+            else:
+                print(f"   ✅ 权重加载验证成功")
         else:
             print(f"   ❌ Missing cond_embedder.weight")
             print(f"   Available keys: {list(pytorch_state_dict.keys())}")
