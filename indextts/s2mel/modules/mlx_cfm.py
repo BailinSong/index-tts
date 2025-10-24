@@ -14,6 +14,7 @@ from indextts.s2mel.modules.mlx_gpt_fast import (
     create_mlx_transformer_from_config
 )
 from indextts.s2mel.modules.mlx_wavenet import MLXWaveNet
+from indextts.s2mel.modules.mlx_cfm_rewritten import MLXCFMRewritten
 
 
 def mlx_modulate(x, shift, scale):
@@ -442,15 +443,16 @@ class MLXCFM(nn.Module):
         self.sigma_min = 1e-6
         self.in_channels = config.DiT.in_channels
         
-        # DiT estimator
-        self.estimator = MLXDiT(config)
+        # DiT estimator - 使用重写的版本
+        from indextts.s2mel.modules.mlx_cfm_rewritten import MLXDiTRewritten
+        self.estimator = MLXDiTRewritten(config)
         
         # Check if zero_prompt_speech_token is set
         self.zero_prompt_speech_token = config.DiT.get('zero_prompt_speech_token', False)
         
         print(">> MLX CFM initialized with DiT estimator")
     
-    def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5):
+    def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5, debug_layers=False):
         """
         Euler solver for ODE.
         
@@ -503,9 +505,9 @@ class MLXCFM(nn.Module):
             # 计算时间步长
             dt = t_span[step] - t_span[step - 1]
             
-            # 调试：记录每步的输入
-            if step <= 3:  # 只记录前3步
-                print(f"\n>> [MLX CFM Debug] Step {step}:")
+            # 逐层调试输出
+            if debug_layers:
+                print(f">> [MLX CFM Debug] Step {step}:")
                 print(f"   x: min={float(x.min()):.6f}, max={float(x.max()):.6f}, mean={float(x.mean()):.6f}")
                 print(f"   t: {float(t):.6f}")
                 print(f"   dt: {float(dt):.6f}")
@@ -539,8 +541,8 @@ class MLXCFM(nn.Module):
                 t_scalar = mx.array([float(t)])  # 与PyTorch的t.unsqueeze(0)对应
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t_scalar, style, mu)
             
-            # 调试：记录estimator输出
-            if step <= 3:  # 只记录前3步
+            # 逐层调试输出
+            if debug_layers:
                 print(f"   dphi_dt: min={float(dphi_dt.min()):.6f}, max={float(dphi_dt.max()):.6f}, mean={float(dphi_dt.mean()):.6f}")
             
             # Euler step (与PyTorch版本完全一致，无裁剪)
@@ -568,7 +570,7 @@ class MLXCFM(nn.Module):
         
         return x
     
-    def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5):
+    def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5, unified_random=None):
         """
         Inference method (entry point).
         
@@ -605,17 +607,23 @@ class MLXCFM(nn.Module):
         
         batch, seq_len, _ = mu_mlx.shape
         
-        # Initialize noise - 使用与PyTorch相同的随机种子
+        # Initialize noise - 使用统一随机数生成器
         import torch
         torch.manual_seed(42)  # 确保与PyTorch版本同步
         mx.random.seed(42)
-        z = mx.random.normal((batch, self.in_channels, seq_len)) * temperature
+        
+        if unified_random is not None:
+            # 使用统一随机数生成器生成噪声
+            z = unified_random.generate_noise_mlx((batch, self.in_channels, seq_len)) * temperature
+        else:
+            # 回退到原始方法
+            z = mx.random.normal((batch, self.in_channels, seq_len)) * temperature
         
         # Create time span
         t_span = mx.linspace(0, 1, n_timesteps + 1)
         
         # Solve ODE
-        result = self.solve_euler(z, x_lens_mlx, prompt_mlx, mu_mlx, style_mlx, f0, t_span, inference_cfg_rate)
+        result = self.solve_euler(z, x_lens_mlx, prompt_mlx, mu_mlx, style_mlx, f0, t_span, inference_cfg_rate, debug_layers=True)
         
         # Convert back if needed
         if convert_back:
@@ -636,6 +644,26 @@ class MLXCFM(nn.Module):
             Number of weights loaded
         """
         from indextts.s2mel.modules.mlx_dit_weights import load_dit_weights
+        
+        print(f">> Loading MLX CFM weights from PyTorch...")
+        print(f"   Prefix: {prefix}")
+        print(f"   Available keys: {len(pytorch_state_dict)}")
+        
+        # 检查关键权重是否存在
+        key_checks = [
+            f"{prefix}estimator.t_embedder.mlp.0.weight",
+            f"{prefix}estimator.t_embedder.mlp.0.bias", 
+            f"{prefix}estimator.t_embedder.mlp.2.weight",
+            f"{prefix}estimator.t_embedder.mlp.2.bias",
+            f"{prefix}estimator.cond_embedder.weight"
+        ]
+        
+        for key in key_checks:
+            if key in pytorch_state_dict:
+                weight = pytorch_state_dict[key]
+                print(f"   ✅ Found {key}: {weight.shape}, range: [{weight.min():.6f}, {weight.max():.6f}]")
+            else:
+                print(f"   ❌ Missing {key}")
         
         # Load DiT/estimator weights
         estimator_prefix = f"{prefix}estimator."
@@ -666,7 +694,7 @@ class MLXCFM(nn.Module):
 
         # Get all parameters from estimator (DiT)
         params = self.estimator.parameters()
-        weights = flatten_parameters(params, "cfm.estimator")
+        weights = flatten_parameters(params, "models.cfm.estimator")
 
         print(f">> Extracted {len(weights)} weight arrays for caching")
         return weights
@@ -783,13 +811,13 @@ class MLXCFM(nn.Module):
         Load CFM weights from cached MLX arrays.
         
         Args:
-            cache_dict: dict from mx.load()
+            cache_dict: dict from mx.load() with keys like "cfm.estimator.xxx"
         
         Returns:
             Number of weights loaded
         """
         # Reconstruct nested parameter dict
-        def unflatten_parameters(flat_dict, prefix="estimator"):
+        def unflatten_parameters(flat_dict, prefix="models.cfm.estimator"):
             """Reconstruct nested dict from flattened parameters"""
             nested = {}
             for key, value in flat_dict.items():
@@ -812,7 +840,7 @@ class MLXCFM(nn.Module):
             return nested
         
         # Unflatten parameters
-        nested_params = unflatten_parameters(cache_dict, "estimator")
+        nested_params = unflatten_parameters(cache_dict, "models.cfm.estimator")
         
         # Use MLX's update method to load weights
         self.estimator.update(nested_params)
@@ -844,3 +872,66 @@ def create_mlx_cfm_from_pytorch(pytorch_cfm, config):
     
     return mlx_cfm
 
+
+    def compare_with_pytorch(self, pytorch_cfm, inputs, tolerance=1e-5):
+        """
+        与PyTorch CFM进行逐层对比
+        """
+        print("\n" + "="*60)
+        print("🔍 MLX CFM vs PyTorch CFM 逐层对比")
+        print("="*60)
+        
+        # 解包输入
+        cat_condition, x_lens, ref_mel, style = inputs
+        
+        # 转换输入格式
+        from indextts.utils.mlx_utils import torch_to_mlx
+        cat_condition_mlx = torch_to_mlx(cat_condition)
+        x_lens_mlx = torch_to_mlx(x_lens)
+        ref_mel_mlx = torch_to_mlx(ref_mel)
+        style_mlx = torch_to_mlx(style)
+        
+        print("\n📊 输入对比:")
+        compare_tensor_values(cat_condition, cat_condition_mlx, "cat_condition", tolerance)
+        compare_tensor_values(x_lens, x_lens_mlx, "x_lens", tolerance)
+        compare_tensor_values(ref_mel, ref_mel_mlx, "ref_mel", tolerance)
+        compare_tensor_values(style, style_mlx, "style", tolerance)
+        
+        # 对比estimator
+        print("\n🔍 Estimator对比:")
+        if hasattr(self, 'estimator') and hasattr(pytorch_cfm, 'estimator'):
+            self._compare_estimator(pytorch_cfm.estimator, tolerance)
+        
+        # 对比输出
+        print("\n📊 输出对比:")
+        mlx_output = self.inference(cat_condition_mlx, x_lens_mlx, ref_mel_mlx, style_mlx)
+        pytorch_output = pytorch_cfm.inference(cat_condition, x_lens, ref_mel, style)
+        
+        compare_tensor_values(pytorch_output, mlx_output, "CFM输出", tolerance)
+        
+        return mlx_output, pytorch_output
+    
+    def _compare_estimator(self, pytorch_estimator, tolerance=1e-5):
+        """
+        对比estimator的内部层
+        """
+        print("\n🔍 Estimator内部层对比:")
+        
+        # 对比权重
+        if hasattr(self.estimator, 'weight') and hasattr(pytorch_estimator, 'weight'):
+            mlx_weight = self.estimator.weight
+            pytorch_weight = pytorch_estimator.weight.detach().cpu()
+            compare_tensor_values(pytorch_weight, mlx_weight, "Estimator权重", tolerance)
+        
+        # 对比偏置
+        if hasattr(self.estimator, 'bias') and hasattr(pytorch_estimator, 'bias'):
+            mlx_bias = self.estimator.bias
+            pytorch_bias = pytorch_estimator.bias.detach().cpu()
+            compare_tensor_values(pytorch_bias, mlx_bias, "Estimator偏置", tolerance)
+        
+        # 对比其他参数
+        for attr_name in ['scale', 'shift']:
+            if hasattr(self.estimator, attr_name) and hasattr(pytorch_estimator, attr_name):
+                mlx_param = getattr(self.estimator, attr_name)
+                pytorch_param = getattr(pytorch_estimator, attr_name).detach().cpu()
+                compare_tensor_values(pytorch_param, mlx_param, f"Estimator {attr_name}", tolerance)

@@ -28,7 +28,7 @@ class BASECFM(torch.nn.Module, ABC):
             self.zero_prompt_speech_token = False
 
     @torch.inference_mode()
-    def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5):
+    def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5, unified_random=None):
         """Forward diffusion
 
         Args:
@@ -49,14 +49,18 @@ class BASECFM(torch.nn.Module, ABC):
                 shape: (batch_size, 80, mel_timesteps)
         """
         B, T = mu.size(0), mu.size(1)
-        # 确保使用固定的随机种子
-        torch.manual_seed(42)
-        z = torch.randn([B, self.in_channels, T], device=mu.device) * temperature
+        # 使用统一随机数生成器
+        if unified_random is not None:
+            z = unified_random.generate_noise((B, self.in_channels, T), device=mu.device) * temperature
+        else:
+            # 回退到原始方法
+            torch.manual_seed(42)
+            z = torch.randn([B, self.in_channels, T], device=mu.device) * temperature
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
         # t_span = t_span + (-1) * (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
-        return self.solve_euler(z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate)
+        return self.solve_euler(z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate, debug_layers=True)
 
-    def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5):
+    def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5, debug_layers=False):
         """
         Fixed euler solver for ODEs.
         Args:
@@ -72,6 +76,16 @@ class BASECFM(torch.nn.Module, ABC):
             style (torch.Tensor): reference global style
                 shape: (batch_size, 192)
         """
+        # 逐层调试：记录输入
+        print(f">> [PyTorch CFM Debug] solve_euler输入:")
+        print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}")
+        print(f"   x_lens: {x_lens}")
+        print(f"   prompt: {prompt.shape}, min={prompt.min():.6f}, max={prompt.max():.6f}")
+        print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
+        print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
+        print(f"   t_span: {t_span.shape}, min={t_span.min():.6f}, max={t_span.max():.6f}")
+        print(f"   inference_cfg_rate: {inference_cfg_rate}")
+        
         t, _, _ = t_span[0], t_span[-1], t_span[1] - t_span[0]
 
         # I am storing this because I can later plot it by putting a debugger here and saving it to a file
@@ -94,10 +108,24 @@ class BASECFM(torch.nn.Module, ABC):
                 stacked_x = torch.cat([x, x], dim=0)
                 stacked_t = torch.cat([t.unsqueeze(0), t.unsqueeze(0)], dim=0)
 
+                # 逐层调试：记录estimator输入
+                if debug_layers:
+                    print(f">> [PyTorch CFM Debug] Estimator输入:")
+                    print(f"   stacked_x: {stacked_x.shape}, min={stacked_x.min():.6f}, max={stacked_x.max():.6f}")
+                    print(f"   stacked_prompt_x: {stacked_prompt_x.shape}, min={stacked_prompt_x.min():.6f}, max={stacked_prompt_x.max():.6f}")
+                    print(f"   stacked_style: {stacked_style.shape}, min={stacked_style.min():.6f}, max={stacked_style.max():.6f}")
+                    print(f"   stacked_mu: {stacked_mu.shape}, min={stacked_mu.min():.6f}, max={stacked_mu.max():.6f}")
+                    print(f"   stacked_t: {stacked_t.shape}, min={stacked_t.min():.6f}, max={stacked_t.max():.6f}")
+
                 # Perform a single forward pass for both original and CFG inputs
                 stacked_dphi_dt = self.estimator(
                     stacked_x, stacked_prompt_x, x_lens, stacked_t, stacked_style, stacked_mu,
                 )
+
+                # 逐层调试：记录estimator输出
+                if debug_layers:
+                    print(f">> [PyTorch CFM Debug] Estimator输出:")
+                    print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
 
                 # Split the output back into the original and CFG components
                 dphi_dt, cfg_dphi_dt = stacked_dphi_dt.chunk(2, dim=0)
@@ -105,7 +133,29 @@ class BASECFM(torch.nn.Module, ABC):
                 # Apply CFG formula
                 dphi_dt = (1.0 + inference_cfg_rate) * dphi_dt - inference_cfg_rate * cfg_dphi_dt
             else:
+                # 逐层调试：记录estimator输入
+                if debug_layers:
+                    print(f">> [PyTorch CFM Debug] Estimator输入:")
+                    print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}")
+                    print(f"   prompt_x: {prompt_x.shape}, min={prompt_x.min():.6f}, max={prompt_x.max():.6f}")
+                    print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
+                    print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
+                    print(f"   t: {t.unsqueeze(0).shape}, min={t.unsqueeze(0).min():.6f}, max={t.unsqueeze(0).max():.6f}")
+                
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t.unsqueeze(0), style, mu)
+                
+                # 逐层调试：记录estimator输出
+                if debug_layers:
+                    print(f">> [PyTorch CFM Debug] Estimator输出:")
+                    print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
+
+            # 逐层调试输出
+            if debug_layers:
+                print(f">> [PyTorch CFM Debug] Step {step}:")
+                print(f"   x: min={x.min():.6f}, max={x.max():.6f}, mean={x.mean():.6f}")
+                print(f"   t: {t.item():.6f}")
+                print(f"   dt: {dt.item():.6f}")
+                print(f"   dphi_dt: min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}, mean={dphi_dt.mean():.6f}")
 
             x = x + dt * dphi_dt
             t = t + dt
@@ -115,7 +165,7 @@ class BASECFM(torch.nn.Module, ABC):
             x[:, :, :prompt_len] = 0
 
         return sol[-1]
-    def forward(self, x1, x_lens, prompt_lens, mu, style):
+    def forward(self, x1, x_lens, prompt_lens, mu, style, unified_random=None):
         """Computes diffusion loss
 
         Args:
@@ -136,10 +186,17 @@ class BASECFM(torch.nn.Module, ABC):
         """
         b, _, t = x1.shape
 
-        # random timestep
-        t = torch.rand([b, 1, 1], device=mu.device, dtype=x1.dtype)
-        # sample noise p(x_0)
-        z = torch.randn_like(x1)
+        # 使用统一随机数生成器
+        if unified_random is not None:
+            # random timestep
+            t = unified_random.generate_uniform((b, 1, 1), device=mu.device, dtype=x1.dtype)
+            # sample noise p(x_0)
+            z = unified_random.generate_noise_like(x1)
+        else:
+            # random timestep
+            t = torch.rand([b, 1, 1], device=mu.device, dtype=x1.dtype)
+            # sample noise p(x_0)
+            z = torch.randn_like(x1)
 
         y = (1 - (1 - self.sigma_min) * t) * z + t * x1
         u = x1 - (1 - self.sigma_min) * z

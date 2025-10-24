@@ -95,9 +95,26 @@ class FinalLayer(nn.Module):
         )
 
     def forward(self, x, c):
-        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = modulate(self.norm_final(x), shift, scale)
-        x = self.linear(x)
+        # 逐层调试：记录final_layer输入
+        print(f">> [PyTorch FinalLayer Debug] 输入:")
+        print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}, mean={x.mean():.6f}")
+        print(f"   c: {c.shape}, min={c.min():.6f}, max={c.max():.6f}, mean={c.mean():.6f}")
+        
+        c_emb = self.adaLN_modulation(c)
+        print(f"   c_emb: {c_emb.shape}, min={c_emb.min():.6f}, max={c_emb.max():.6f}, mean={c_emb.mean():.6f}")
+        
+        shift, scale = c_emb.chunk(2, dim=1)
+        print(f"   shift: {shift.shape}, min={shift.min():.6f}, max={shift.max():.6f}, mean={shift.mean():.6f}")
+        print(f"   scale: {scale.shape}, min={scale.min():.6f}, max={scale.max():.6f}, mean={scale.mean():.6f}")
+        
+        x_norm = self.norm_final(x)
+        print(f"   x_norm: {x_norm.shape}, min={x_norm.min():.6f}, max={x_norm.max():.6f}, mean={x_norm.mean():.6f}")
+        
+        x_modulated = modulate(x_norm, shift, scale)
+        print(f"   x_modulated: {x_modulated.shape}, min={x_modulated.min():.6f}, max={x_modulated.max():.6f}, mean={x_modulated.mean():.6f}")
+        
+        x = self.linear(x_modulated)
+        print(f"   x_output: {x.shape}, min={x.min():.6f}, max={x.max():.6f}, mean={x.mean():.6f}")
         return x
 
 class DiT(torch.nn.Module):

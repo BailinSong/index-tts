@@ -15,6 +15,9 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# 导入一致性随机数生成器
+from unified_random_generator import UnifiedRandomGenerator
+
 from omegaconf import OmegaConf
 
 from indextts.gpt.model_v2 import UnifiedVoice
@@ -108,6 +111,10 @@ class IndexTTS2:
         self.dtype = torch.float16 if self.use_fp16 else None
         self.diffusion_steps = diffusion_steps  # Number of diffusion steps for S2MEL (default: 25)
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
+
+        # 🎯 统一随机数生成器：确保所有随机数生成的一致性
+        self.unified_random = UnifiedRandomGenerator(seed=42)
+        print(">> Unified Random Generator: Initialized with seed 42")
 
         # 🎯 内存优化：Qwen Emotion 延迟加载（节省 ~1.2GB）
         self.qwen_emo = None
@@ -297,9 +304,8 @@ class IndexTTS2:
                             cfm_weights = {}
                             for key, value in s2mel_weights.items():
                                 if key.startswith('models.cfm.'):
-                                    # 移除 models. 前缀，只保留 cfm. 前缀
-                                    cfm_key = key.replace('models.cfm.', 'cfm.')
-                                    cfm_weights[cfm_key] = value
+                                    # 保持原始键名，因为MLX CFM期望cfm.estimator.xxx格式
+                                    cfm_weights[key] = value
                             
                             print(f"   Extracted {len(cfm_weights)} CFM weights from s2mel.npz")
                             
@@ -715,6 +721,8 @@ class IndexTTS2:
         seed = generation_kwargs.pop('seed', None)
         if seed is not None:
             print(f">> Setting random seed: {seed}")
+            # 使用统一随机数生成器
+            self.unified_random.reset_seed(seed)
             torch.manual_seed(seed)
             random.seed(seed)
             if self.use_mlx:
@@ -1275,10 +1283,11 @@ class IndexTTS2:
                             cat_condition_mlx,
                             x_lens_mlx,
                             ref_mel_mlx, 
-                            style_mlx, 
-                            None, 
+                            style_mlx,
+                            None,
                             diffusion_steps,
-                            inference_cfg_rate=inference_cfg_rate
+                            inference_cfg_rate=inference_cfg_rate,
+                            unified_random=self.unified_random
                         )
                         
                         print(f">> [MLX CFM Debug] MLX CFM 输出:")
@@ -1314,7 +1323,8 @@ class IndexTTS2:
                                                                        torch.LongTensor([cat_condition.size(1)]).to(
                                                                            cond.device),
                                                                        ref_mel, style, None, diffusion_steps,
-                                                                       inference_cfg_rate=inference_cfg_rate)
+                                                                       inference_cfg_rate=inference_cfg_rate,
+                                                                       unified_random=self.unified_random)
                         
                         # 捕获PyTorch S2MEL输出用于调试
                         self._s2mel_outputs = {
@@ -1520,10 +1530,62 @@ class QwenEmotion:
 
         return self.convert(content)
 
-
-if __name__ == "__main__":
-    prompt_wav = "examples/voice_01.wav"
-    text = '欢迎大家来体验indextts2，并给予我们意见与反馈，谢谢大家。'
-
-    tts = IndexTTS2(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_cuda_kernel=False)
-    tts.infer(spk_audio_prompt=prompt_wav, text=text, output_path="gen.wav", verbose=True)
+    def compare_mlx_pytorch_cfm(self, cached_inputs=None):
+        """
+        对比MLX和PyTorch CFM的输出
+        """
+        print("\n" + "="*70)
+        print("🔍 MLX vs PyTorch CFM 生产环境对比")
+        print("="*70)
+        
+        # 加载缓存数据
+        if cached_inputs is None:
+            cached_data = load_cached_inputs()
+            if not cached_data:
+                print("❌ 没有找到缓存数据，无法进行对比")
+                return
+        else:
+            cached_data = cached_inputs
+        
+        # 检查是否有MLX CFM
+        if not hasattr(self, 'mlx_s2mel_cfm') or self.mlx_s2mel_cfm is None:
+            print("❌ MLX CFM未初始化")
+            return
+        
+        # 检查是否有PyTorch CFM
+        if not hasattr(self, 's2mel') or self.s2mel is None:
+            print("❌ PyTorch S2MEL未初始化")
+            return
+        
+        try:
+            # 使用MLX CFM进行对比
+            if 'cfm_inputs_mlx' in cached_data:
+                inputs = cached_data['cfm_inputs_mlx']
+                cat_condition = inputs['cat_condition']
+                x_lens = inputs['x_lens']
+                ref_mel = inputs['ref_mel']
+                style = inputs['style']
+                
+                print("\n📊 使用缓存输入进行对比:")
+                print(f"   cat_condition: {cat_condition.shape}")
+                print(f"   x_lens: {x_lens.shape}")
+                print(f"   ref_mel: {ref_mel.shape}")
+                print(f"   style: {style.shape}")
+                
+                # 调用MLX CFM的对比方法
+                mlx_output, pytorch_output = self.mlx_s2mel_cfm.compare_with_pytorch(
+                    self.s2mel.cfm, 
+                    (cat_condition, x_lens, ref_mel, style)
+                )
+                
+                print("\n✅ 对比完成")
+                return mlx_output, pytorch_output
+            else:
+                print("❌ 没有找到MLX CFM输入缓存")
+                return None, None
+                
+        except Exception as e:
+            print(f"❌ 对比过程中出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None

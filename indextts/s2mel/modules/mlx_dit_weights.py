@@ -87,34 +87,72 @@ def load_dit_weights(mlx_dit, pytorch_state_dict, prefix="models.cfm.estimator."
         loaded += 1
     
     # cond_projection or cond_embedder (depends on content_type)
+    print(f"   🔍 Checking cond_projection/cond_embedder...")
+    print(f"   mlx_dit has cond_projection: {hasattr(mlx_dit, 'cond_projection')}")
+    print(f"   mlx_dit has cond_embedder: {hasattr(mlx_dit, 'cond_embedder')}")
+    
     if hasattr(mlx_dit, 'cond_projection'):
+        print(f"   Using cond_projection path...")
         if f"{prefix}cond_projection.weight" in pytorch_state_dict:
             mlx_dit.cond_projection.weight = mx.array(pytorch_state_dict[f"{prefix}cond_projection.weight"])
             loaded += 1
         if f"{prefix}cond_projection.bias" in pytorch_state_dict:
             mlx_dit.cond_projection.bias = mx.array(pytorch_state_dict[f"{prefix}cond_projection.bias"])
             loaded += 1
-    elif hasattr(mlx_dit, 'cond_embedder'):
-        if f"{prefix}cond_embedder.weight" in pytorch_state_dict:
-            mlx_dit.cond_embedder.weight = mx.array(pytorch_state_dict[f"{prefix}cond_embedder.weight"])
-            loaded += 1
     
-    # t_embedder
+    # 修复：同时加载cond_embedder权重（如果存在）
+    if hasattr(mlx_dit, 'cond_embedder'):
+        # 修复cond_embedder权重加载 - 确保从PyTorch正确转换
+        print(f"   🔍 Checking cond_embedder weights...")
+        print(f"   Available keys with 'cond_embedder': {[k for k in pytorch_state_dict.keys() if 'cond_embedder' in k]}")
+        
+        if f"{prefix}cond_embedder.weight" in pytorch_state_dict:
+            pytorch_weight = pytorch_state_dict[f"{prefix}cond_embedder.weight"]
+            mlx_dit.cond_embedder.weight = mx.array(pytorch_weight)
+            loaded += 1
+            print(f"   ✅ Loaded cond_embedder.weight: {pytorch_weight.shape}, range: [{pytorch_weight.min():.6f}, {pytorch_weight.max():.6f}]")
+        else:
+            print(f"   ❌ Missing cond_embedder.weight")
+            print(f"   Available keys: {list(pytorch_state_dict.keys())}")
+    
+    # t_embedder - 修复权重加载逻辑
     if f"{prefix}t_embedder.freqs" in pytorch_state_dict:
         mlx_dit.t_embedder.freqs = mx.array(pytorch_state_dict[f"{prefix}t_embedder.freqs"])
         loaded += 1
+        print(f"   ✅ Loaded t_embedder.freqs: {pytorch_state_dict[f'{prefix}t_embedder.freqs'].shape}")
+    
+    # 修复t_embedder权重加载 - 确保从PyTorch正确转换
     if f"{prefix}t_embedder.mlp.0.weight" in pytorch_state_dict:
-        mlx_dit.t_embedder.mlp_0.weight = mx.array(pytorch_state_dict[f"{prefix}t_embedder.mlp.0.weight"])
+        pytorch_weight = pytorch_state_dict[f"{prefix}t_embedder.mlp.0.weight"]
+        mlx_dit.t_embedder.mlp_0.weight = mx.array(pytorch_weight)
         loaded += 1
+        print(f"   ✅ Loaded t_embedder.mlp.0.weight: {pytorch_weight.shape}, range: [{pytorch_weight.min():.6f}, {pytorch_weight.max():.6f}]")
+    else:
+        print(f"   ❌ Missing t_embedder.mlp.0.weight")
+    
     if f"{prefix}t_embedder.mlp.0.bias" in pytorch_state_dict:
-        mlx_dit.t_embedder.mlp_0.bias = mx.array(pytorch_state_dict[f"{prefix}t_embedder.mlp.0.bias"])
+        pytorch_bias = pytorch_state_dict[f"{prefix}t_embedder.mlp.0.bias"]
+        mlx_dit.t_embedder.mlp_0.bias = mx.array(pytorch_bias)
         loaded += 1
+        print(f"   ✅ Loaded t_embedder.mlp.0.bias: {pytorch_bias.shape}, range: [{pytorch_bias.min():.6f}, {pytorch_bias.max():.6f}]")
+    else:
+        print(f"   ❌ Missing t_embedder.mlp.0.bias")
+    
     if f"{prefix}t_embedder.mlp.2.weight" in pytorch_state_dict:
-        mlx_dit.t_embedder.mlp_2.weight = mx.array(pytorch_state_dict[f"{prefix}t_embedder.mlp.2.weight"])
+        pytorch_weight = pytorch_state_dict[f"{prefix}t_embedder.mlp.2.weight"]
+        mlx_dit.t_embedder.mlp_2.weight = mx.array(pytorch_weight)
         loaded += 1
+        print(f"   ✅ Loaded t_embedder.mlp.2.weight: {pytorch_weight.shape}, range: [{pytorch_weight.min():.6f}, {pytorch_weight.max():.6f}]")
+    else:
+        print(f"   ❌ Missing t_embedder.mlp.2.weight")
+    
     if f"{prefix}t_embedder.mlp.2.bias" in pytorch_state_dict:
-        mlx_dit.t_embedder.mlp_2.bias = mx.array(pytorch_state_dict[f"{prefix}t_embedder.mlp.2.bias"])
+        pytorch_bias = pytorch_state_dict[f"{prefix}t_embedder.mlp.2.bias"]
+        mlx_dit.t_embedder.mlp_2.bias = mx.array(pytorch_bias)
         loaded += 1
+        print(f"   ✅ Loaded t_embedder.mlp.2.bias: {pytorch_bias.shape}, range: [{pytorch_bias.min():.6f}, {pytorch_bias.max():.6f}]")
+    else:
+        print(f"   ❌ Missing t_embedder.mlp.2.bias")
     
     # cond_x_merge_linear
     if f"{prefix}cond_x_merge_linear.weight" in pytorch_state_dict:
@@ -347,12 +385,12 @@ def load_wavenet_weights(mlx_dit, pytorch_state_dict, prefix):
         mlx_dit.final_layer.linear.bias = mx.array(pytorch_state_dict[f"{final_prefix}.linear.bias"])
         loaded += 1
     
-    # adaLN_modulation
+    # adaLN_modulation - 修复为新的Sequential结构
     if f"{final_prefix}.adaLN_modulation.1.weight" in pytorch_state_dict:
-        mlx_dit.final_layer.adaLN_0.weight = mx.array(pytorch_state_dict[f"{final_prefix}.adaLN_modulation.1.weight"])
+        mlx_dit.final_layer.adaLN_modulation.layers[1].weight = mx.array(pytorch_state_dict[f"{final_prefix}.adaLN_modulation.1.weight"])
         loaded += 1
     if f"{final_prefix}.adaLN_modulation.1.bias" in pytorch_state_dict:
-        mlx_dit.final_layer.adaLN_0.bias = mx.array(pytorch_state_dict[f"{final_prefix}.adaLN_modulation.1.bias"])
+        mlx_dit.final_layer.adaLN_modulation.layers[1].bias = mx.array(pytorch_state_dict[f"{final_prefix}.adaLN_modulation.1.bias"])
         loaded += 1
     
     return loaded

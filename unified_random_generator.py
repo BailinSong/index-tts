@@ -82,6 +82,24 @@ class UnifiedRandomGenerator:
         
         return noise_mlx
     
+    def generate_noise_like(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        生成与给定张量形状相同的一致性噪声
+        
+        Args:
+            tensor: 参考张量
+            
+        Returns:
+            噪声张量
+        """
+        # 使用numpy生成基础随机数
+        noise_np = self.np_generator.randn(*tensor.shape).astype(np.float32)
+        
+        # 转换为PyTorch张量
+        noise_torch = torch.from_numpy(noise_np).to(tensor.device, dtype=tensor.dtype)
+        
+        return noise_torch
+    
     def generate_uniform(self, shape: Tuple[int, ...], low: float = 0.0, high: float = 1.0, device: str = 'cpu') -> torch.Tensor:
         """
         生成一致性均匀分布随机数

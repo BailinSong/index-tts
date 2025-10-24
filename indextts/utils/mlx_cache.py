@@ -112,6 +112,10 @@ class MLXModelCache:
                 if isinstance(value, torch.Tensor):
                     numpy_array = value.cpu().numpy().astype('float32')  # 确保使用float32
                     mlx_state_dict[key] = mx.array(numpy_array)
+                    
+                    # 特别检查t_embedder和cond_embedder权重
+                    if "t_embedder.mlp" in key or "cond_embedder.weight" in key:
+                        print(f"   🔍 Converting {key}: {numpy_array.shape}, range: [{numpy_array.min():.6f}, {numpy_array.max():.6f}]")
                 else:
                     mlx_state_dict[key] = value
 

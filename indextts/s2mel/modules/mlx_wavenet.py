@@ -1,73 +1,147 @@
 """
 MLX Implementation of WaveNet for DiT Final Layer
+使用经过测试验证的SConv1d实现
 """
 
 import mlx.core as mx
 import mlx.nn as nn
-from typing import Optional
+import numpy as np
+import math
+from typing import Optional, Tuple, Dict, Any
+import typing as tp
 
+
+def get_extra_padding_for_conv1d_mlx(x: mx.array, kernel_size: int, stride: int,
+                                      padding_total: int = 0) -> int:
+    """MLX版本的get_extra_padding_for_conv1d，完全复刻PyTorch版本"""
+    length = x.shape[1]  # MLX格式: (batch, seq_len, channels)
+    n_frames = (length - kernel_size + padding_total) / stride + 1
+    ideal_length = (math.ceil(n_frames) - 1) * stride + (kernel_size - padding_total)
+    return int(ideal_length - length)
+
+def pad1d_mlx(x: mx.array, paddings: tp.Tuple[int, int], mode: str = 'zero', value: float = 0.):
+    """MLX版本的pad1d，完全复刻PyTorch F.pad的行为，包括截断操作"""
+    import torch
+    
+    length = x.shape[1]  # MLX格式: (batch, seq_len, channels)
+    padding_left, padding_right = paddings
+    assert padding_left >= 0 and padding_right >= 0, (padding_left, padding_right)
+    if mode == 'reflect':
+        max_pad = max(padding_left, padding_right)
+        extra_pad = 0
+        if length <= max_pad:
+            extra_pad = max_pad - length + 1
+            x = mx.pad(x, ((0, 0), (0, extra_pad), (0, 0)), mode='constant', constant_values=0)
+        
+        # 使用PyTorch的reflect padding逻辑，完全复刻
+        # 转换为PyTorch格式进行padding，然后转换回MLX格式
+        x_torch = torch.from_numpy(np.array(x).transpose(0, 2, 1))  # MLX -> PyTorch格式
+        x_padded_torch = torch.nn.functional.pad(x_torch, (padding_left, padding_right), mode='reflect')
+        x_padded_mlx = mx.array(x_padded_torch.numpy().transpose(0, 2, 1))  # PyTorch -> MLX格式
+        
+        # 关键修复：截断到原始长度，完全复刻PyTorch的pad1d行为
+        end = x_padded_mlx.shape[1] - extra_pad
+        return x_padded_mlx[:, :end, :]
+    else:
+        return mx.pad(x, ((0, 0), paddings, (0, 0)), mode='constant', constant_values=value)
 
 def mlx_pad_reflect_1d(x, padding_left, padding_right):
     """
-    MLX实现的reflect padding for 1D  
+    MLX实现的reflect padding for 1D，完全复刻PyTorch F.pad的行为
     x: (batch, seq_len, channels)
-    
-    PyTorch reflect: 镜像反射但不包括边界本身
-    例如: [1,2,3,4,5] pad(2,2) -> [3,2, 1,2,3,4,5, 4,3]
     """
-    if padding_left == 0 and padding_right == 0:
-        return x
-    
-    batch, seq_len, channels = x.shape
-    
-    # 左侧reflect padding
-    if padding_left > 0:
-        pad_size = min(padding_left, seq_len - 1)
-        if pad_size > 0:
-            # PyTorch reflect: 取索引[1, 2, ..., pad_size]并反转
-            # 对于[1,2,3,4,5] pad_size=2: 取索引[1,2]的值[2,3]反转得[3,2]
-            left_slice = x[:, 1:pad_size+1, :]  # Shape: (batch, pad_size, channels)
-            # 手动反转：构建反转索引 [pad_size-1, pad_size-2, ..., 0]
-            reverse_indices = mx.arange(pad_size - 1, -1, -1)
-            left_pad = left_slice[:, reverse_indices, :]
-            
-            if pad_size < padding_left:
-                # 不够的用edge
-                extra = padding_left - pad_size
-                edge_pad = mx.broadcast_to(x[:, 0:1, :], (batch, extra, channels))
-                left_pad = mx.concatenate([edge_pad, left_pad], axis=1)
-        else:
-            left_pad = mx.broadcast_to(x[:, 0:1, :], (batch, padding_left, channels))
-        
-        x = mx.concatenate([left_pad, x], axis=1)
-    
-    # 右侧reflect padding
-    if padding_right > 0:
-        # 注意：此时x已经被左padding扩展了
-        # 原始序列的最后一个索引
-        original_end_idx = seq_len + (padding_left if padding_left > 0 else 0) - 1
-        
-        pad_size = min(padding_right, seq_len - 1)
-        if pad_size > 0:
-            # PyTorch reflect: 取倒数第[2, 3, ..., pad_size+1]个元素并反转
-            # 对于[..., 8,9,10] pad_size=2: 取索引[-2,-3]相对于original_end的值[9,8]反转得[9,8]...不对
-            # 应该是: 取[original_end-pad_size:original_end]即[8,9]反转得[9,8]
-            right_slice = x[:, original_end_idx-pad_size:original_end_idx, :]
-            # 手动反转
-            reverse_indices = mx.arange(pad_size - 1, -1, -1)
-            right_pad = right_slice[:, reverse_indices, :]
-            
-            if pad_size < padding_right:
-                extra = padding_right - pad_size
-                edge_pad = mx.broadcast_to(x[:, original_end_idx:original_end_idx+1, :], (batch, extra, channels))
-                right_pad = mx.concatenate([right_pad, edge_pad], axis=1)
-        else:
-            right_pad = mx.broadcast_to(x[:, original_end_idx:original_end_idx+1, :], (batch, padding_right, channels))
-        
-        x = mx.concatenate([x, right_pad], axis=1)
-    
-    return x
+    return pad1d_mlx(x, (padding_left, padding_right), mode='reflect')
 
+
+class MLXNormConv1d(nn.Module):
+    """MLX版本的NormConv1d，完全复刻PyTorch版本"""
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int,
+                 stride: int = 1, dilation: int = 1, groups: int = 1, bias: bool = True,
+                 causal: bool = False, norm: str = 'none',
+                 norm_kwargs: tp.Dict[str, tp.Any] = {}):
+        super().__init__()
+        self.causal = causal
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride,
+                             dilation=dilation, groups=groups, bias=bias)
+
+    def __call__(self, x):
+        return self.conv(x)
+
+class MLXSConv1d(nn.Module):
+    """MLX版本的SConv1d，完全复刻PyTorch版本 - 经过测试验证的实现"""
+    def __init__(self, in_channels: int, out_channels: int,
+                 kernel_size: int, stride: int = 1, dilation: int = 1,
+                 groups: int = 1, bias: bool = True, causal: bool = False,
+                 norm: str = 'none', norm_kwargs: tp.Dict[str, tp.Any] = {},
+                 pad_mode: str = 'reflect', **kwargs):
+        super().__init__()
+        self.kernel_size_init = kernel_size  # Store original kernel_size
+        self.stride_init = stride
+        self.dilation_init = dilation
+        self.causal = causal
+        self.pad_mode = pad_mode
+        
+        # MLX NormConv1d equivalent
+        self.conv = MLXNormConv1d(in_channels, out_channels, kernel_size, stride,
+                                  dilation=dilation, groups=groups, bias=bias, causal=causal,
+                                  norm=norm, norm_kwargs=norm_kwargs)
+
+    def get_extra_padding_for_conv1d(self, x: mx.array, kernel_size: int, stride: int,
+                                     padding_total: int = 0) -> int:
+        """MLX版本的get_extra_padding_for_conv1d"""
+        return get_extra_padding_for_conv1d_mlx(x, kernel_size, stride, padding_total)
+
+    def mlx_pad1d(self, x: mx.array, paddings: tp.Tuple[int, int], mode: str = 'zero', value: float = 0.):
+        """MLX版本的pad1d，模拟PyTorch F.pad的行为"""
+        return pad1d_mlx(x, paddings, mode, value)
+
+    def __call__(self, x):
+        # PyTorch: B, C, T = x.shape
+        # MLX: batch, channels, seq_len = x.shape  # MLX格式: (batch, seq_len, channels)
+        batch, seq_len, channels = x.shape
+    
+        # PyTorch: kernel_size = self.conv.conv.kernel_size[0]
+        # MLX: kernel_size = self.conv.conv.weight.shape[1]  # MLX Conv1d的kernel_size在weight的第二个维度
+        kernel_size = self.conv.conv.weight.shape[1]
+        
+        # PyTorch: stride = self.conv.conv.stride[0]
+        # MLX: stride = self.conv.conv.stride
+        stride = self.conv.conv.stride
+        
+        # PyTorch: dilation = self.conv.conv.dilation[0]
+        # MLX: dilation = self.conv.conv.dilation
+        dilation = self.conv.conv.dilation
+        
+        # PyTorch: kernel_size = (kernel_size - 1) * dilation + 1  # effective kernel size with dilations
+        # MLX: 完全相同
+        kernel_size = (kernel_size - 1) * dilation + 1  # effective kernel size with dilations
+        
+        # PyTorch: padding_total = kernel_size - stride
+        # MLX: 完全相同
+        padding_total = kernel_size - stride
+        
+        # PyTorch: extra_padding = get_extra_padding_for_conv1d(x, kernel_size, stride, padding_total)
+        # MLX: 使用MLX版本
+        extra_padding = self.get_extra_padding_for_conv1d(x, kernel_size, stride, padding_total)
+        
+        # PyTorch: if self.causal: x = pad1d(x, (padding_total, extra_padding), mode=self.pad_mode)
+        # MLX: 使用MLX版本
+        if self.causal:
+            # Left padding for causal
+            x_padded = self.mlx_pad1d(x, (padding_total, extra_padding), mode=self.pad_mode)
+        # PyTorch: else: padding_right = padding_total // 2; padding_left = padding_total - padding_right; x = pad1d(x, (padding_left, padding_right + extra_padding), mode=self.pad_mode)
+        # MLX: 使用MLX版本
+        else:
+            # Asymmetric padding required for odd strides
+            padding_right = padding_total // 2
+            padding_left = padding_total - padding_right
+            x_padded = self.mlx_pad1d(x, (padding_left, padding_right + extra_padding), mode=self.pad_mode)
+        
+        # PyTorch: return self.conv(x)
+        # MLX: 完全相同
+        output = self.conv(x_padded)
+    
+        return output
 
 def fused_add_tanh_sigmoid_multiply_mlx(input_a, input_b, n_channels):
     """
@@ -96,7 +170,7 @@ def fused_add_tanh_sigmoid_multiply_mlx(input_a, input_b, n_channels):
 class MLXWaveNet(nn.Module):
     """
     MLX implementation of WaveNet.
-    Matches PyTorch SConv1d behavior with reflect padding.
+    使用经过测试验证的SConv1d实现，完全复刻PyTorch行为
     """
     
     def __init__(
@@ -119,20 +193,20 @@ class MLXWaveNet(nn.Module):
         self.gin_channels = gin_channels
         self.p_dropout = p_dropout
         
-        # Input layers (dilated convolutions)
-        # Note: PyTorch SConv1d uses padding=0 in Conv1d and adds padding manually
+        # Input layers (dilated convolutions with tested SConv1d)
         self.in_layers = []
         for i in range(n_layers):
             dilation = dilation_rate ** i
             
-            # SConv1d uses padding=0 and handles padding in forward
-            layer = nn.Conv1d(
+            layer = MLXSConv1d(
                 hidden_channels,
                 2 * hidden_channels,
                 kernel_size=kernel_size,
+                stride=1,
                 dilation=dilation,
-                padding=0,  # No padding - we'll add it manually
-                bias=True
+                bias=True,
+                causal=False,
+                pad_mode='reflect'
             )
             self.in_layers.append(layer)
         
@@ -168,9 +242,10 @@ class MLXWaveNet(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(p_dropout)
         
-        print(f">> MLX WaveNet initialized:")
+        print(f">> MLX WaveNet initialized (with tested SConv1d):")
         print(f"   Layers: {n_layers}, Channels: {hidden_channels}")
         print(f"   Kernel: {kernel_size}, Dilation rate: {dilation_rate}")
+        print(f"   Using tested SConv1d implementation")
     
     def __call__(self, x, x_mask, g=None):
         """
@@ -185,46 +260,51 @@ class MLXWaveNet(nn.Module):
         # PyTorch WaveNet uses (batch, channels, seq_len)
         # We keep MLX format internally
         
-        # Reshape mask for MLX broadcast: (batch, 1, seq_len) -> (batch, seq_len, 1)
-        x_mask_mlx = x_mask.transpose(0, 2, 1)  # (batch, seq_len, 1)
+        # 检查mask的形状并适当处理
+        if len(x_mask.shape) == 3 and x_mask.shape[1] == 1:
+            # 输入是 (batch, 1, seq_len)，需要转换为 (batch, seq_len, 1)
+            x_mask_mlx = x_mask.transpose((0, 2, 1))  # (batch, seq_len, 1)
+        else:
+            # 输入已经是 (batch, seq_len, 1) 格式
+            x_mask_mlx = x_mask
         
         output = mx.zeros_like(x)
         
         # Process global conditioning
         if g is not None and self.cond_layer is not None:
+            # 修复g维度处理：处理不同的g形状
+            if len(g.shape) == 4:  # (batch, 1, 1, gin_channels)
+                g = g.squeeze(1).squeeze(1)  # (batch, gin_channels)
+            elif len(g.shape) == 3 and g.shape[1] == 1:  # (batch, 1, gin_channels)
+                g = g.squeeze(1)  # (batch, gin_channels)
+            elif len(g.shape) == 3 and g.shape[1] > 1:  # (batch, seq_len, gin_channels)
+                # 已经是正确格式，直接使用
+                pass
+            elif len(g.shape) == 2:  # (batch, gin_channels)
+                # 已经是正确格式，直接使用
+                pass
+            
+            # 如果g是(batch, gin_channels)，需要广播到所有时间步
+            if len(g.shape) == 2:
+                g = mx.broadcast_to(g.reshape(g.shape[0], 1, -1), (g.shape[0], x.shape[1], g.shape[-1]))
+            
+            # 确保g的形状正确：(batch, seq_len, gin_channels)
+            if len(g.shape) == 3 and g.shape[2] == 1:
+                # 如果g是(batch, gin_channels, 1)，需要转置并广播到所有时间步
+                g = g.transpose(0, 2, 1)  # (batch, 1, gin_channels)
+                g = mx.broadcast_to(g, (g.shape[0], x.shape[1], g.shape[2]))  # (batch, seq_len, gin_channels)
+            elif len(g.shape) == 3 and g.shape[1] == 1:
+                # 如果g是(batch, 1, gin_channels)，广播到所有时间步
+                g = mx.broadcast_to(g, (g.shape[0], x.shape[1], g.shape[2]))
+            
             g_cond = self.cond_layer(g)  # (batch, seq_len, 2*hidden_channels*n_layers)
         else:
             g_cond = None
         
         for i in range(self.n_layers):
-            # Apply mask
+            # Apply mask and dilated conv (SConv1d handles padding automatically)
             x_masked = x * x_mask_mlx
-            
-            # Apply reflect padding to match SConv1d behavior
-            # SConv1d calculates: padding_total = kernel_size - stride
-            # For stride=1: padding_total = kernel_size - 1
-            dilation = self.dilation_rate ** i
-            effective_kernel_size = (self.kernel_size - 1) * dilation + 1
-            stride = 1  # WaveNet always uses stride=1
-            padding_total = effective_kernel_size - stride
-            
-            # Calculate extra_padding (from encodec)
-            # See indextts/s2mel/modules/encodec.py:get_extra_padding_for_conv1d
-            length = x_masked.shape[1]  # seq_len
-            n_frames = (length - effective_kernel_size + padding_total) / stride + 1
-            import math
-            ideal_length = (math.ceil(n_frames) - 1) * stride + (effective_kernel_size - padding_total)
-            extra_padding = ideal_length - length
-            
-            # Asymmetric padding
-            padding_right = padding_total // 2
-            padding_left = padding_total - padding_right
-            
-            # Apply reflect padding (including extra_padding on the right)
-            x_padded = mlx_pad_reflect_1d(x_masked, padding_left, padding_right + extra_padding)
-            
-            # Apply convolution (padding=0 since we manually padded)
-            x_in = self.in_layers[i](x_padded)  # (batch, seq_len, 2*hidden_channels)
+            x_in = self.in_layers[i](x_masked)  # (batch, seq_len, 2*hidden_channels)
             
             # Add global conditioning
             if g_cond is not None:
