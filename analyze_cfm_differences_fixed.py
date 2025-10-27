@@ -16,9 +16,9 @@ from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
 from unified_random_generator import UnifiedRandomGenerator
 
 def analyze_cfm_differences():
-    """深度分析CFM差异的根本原因"""
+    """使用前级缓存数据直接分析CFM差异"""
     
-    print('=== 深度分析MLX CFM与PyTorch CFM差异的根本原因 ===')
+    print('=== 使用前级缓存数据直接分析CFM差异 ===')
     
     # 设置固定种子
     torch.manual_seed(42)
@@ -27,313 +27,257 @@ def analyze_cfm_differences():
     
     print(f'固定种子: 42')
     
-    # 初始化 MLX 版本
-    print('\\n1. 初始化 MLX 版本...')
-    tts_mlx = IndexTTS2(
-        cfg_path='checkpoints/config.yaml',
-        model_dir='checkpoints',
-        use_mlx=True,
-        device='mps'
-    )
+    # 初始化 TTS 系统
+    print('\\n1. 初始化 TTS 系统...')
+    tts = IndexTTS2()
     
-    # 准备测试数据
-    test_text = '今天天气真不错'
-    test_voice = 'examples/zh_vo_Main_Linaxita_2_4_24_6.wav'
+    # 加载前级缓存数据
+    print('\\n2. 加载前级缓存数据...')
+    cache_file = 'cfm_inputs_torch.pkl'
     
-    print(f'\\n2. 测试数据: {test_text}')
-    
-    # 重新设置种子确保一致性
-    torch.manual_seed(42)
-    np.random.seed(42)
-    mx.random.seed(42)
-    
-    print('\\n3. 开始 MLX 推理以获取缓存输入...')
+    if not os.path.exists(cache_file):
+        print(f'❌ 未找到缓存文件: {cache_file}')
+        return False
     
     try:
-        # 进行 MLX 推理以获取缓存输入
-        result_mlx = tts_mlx.infer(
-            spk_audio_prompt=test_voice,
-            text=test_text,
-            output_path='analyze_differences_fixed_test.wav',
-            seed=42
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        print(f'✅ 成功加载缓存文件: {cache_file}')
+        print(f'   缓存数据键: {list(cached_data.keys())}')
+    except Exception as e:
+        print(f'❌ 加载缓存文件失败: {e}')
+        return False
+    
+    # 提取缓存数据
+    print('\\n3. 提取缓存数据...')
+    cat_condition = cached_data['cat_condition']
+    x_lens = cached_data['x_lens']
+    ref_mel = cached_data['ref_mel']
+    style = cached_data['style']
+    diffusion_steps = cached_data['diffusion_steps']
+    inference_cfg_rate = cached_data['inference_cfg_rate']
+    
+    print(f'   缓存数据形状:')
+    print(f'   cat_condition: {cat_condition.shape}, 范围: [{cat_condition.min():.6f}, {cat_condition.max():.6f}]')
+    print(f'   x_lens: {x_lens.shape}, 值: {x_lens}')
+    print(f'   ref_mel: {ref_mel.shape}, 范围: [{ref_mel.min():.6f}, {ref_mel.max():.6f}]')
+    print(f'   style: {style.shape}, 范围: [{style.min():.6f}, {style.max():.6f}]')
+    print(f'   diffusion_steps: {diffusion_steps}')
+    print(f'   inference_cfg_rate: {inference_cfg_rate}')
+    
+    # 构建CFM输入
+    print('\\n4. 构建CFM输入...')
+    
+    # 确保所有张量都在MPS设备上
+    device = 'mps'
+    cat_condition = cat_condition.to(device)
+    x_lens = x_lens.to(device)
+    ref_mel = ref_mel.to(device)
+    style = style.to(device)
+    
+    # 根据CFM inference方法的参数格式：
+    # mu: (batch, seq_len, 512) - 语义条件信息
+    # x_lens: (batch,) - 序列长度
+    # prompt: (batch, 80, prompt_len) - 参考梅尔频谱
+    # style: (batch, 192) - 风格向量
+    
+    # 使用cat_condition作为mu (语义条件信息)
+    mu = cat_condition  # (1, 464, 512)
+    
+    # 使用ref_mel作为prompt (参考梅尔频谱)
+    prompt = ref_mel  # (1, 80, 243)
+    
+    # 生成随机噪声作为初始x
+    B, T = mu.size(0), mu.size(1)
+    x = torch.randn(B, 80, T, device=device)  # (1, 80, 464)
+    
+    # 创建时间步t (从0开始)
+    t = torch.zeros(1, dtype=torch.float32, device=device)
+    
+    print(f'   CFM输入形状:')
+    print(f'   mu: {mu.shape}, 范围: [{mu.min():.6f}, {mu.max():.6f}]')
+    print(f'   x_lens: {x_lens.shape}, 值: {x_lens}')
+    print(f'   prompt: {prompt.shape}, 范围: [{prompt.min():.6f}, {prompt.max():.6f}]')
+    print(f'   style: {style.shape}, 范围: [{style.min():.6f}, {style.max():.6f}]')
+    print(f'   x: {x.shape}, 范围: [{x.min():.6f}, {x.max():.6f}]')
+    print(f'   t: {t.shape}, 值: {t}')
+    
+    # 转换为MLX数组
+    print('\\n5. 转换为MLX数组...')
+    mu_mlx = torch_to_mlx(mu)
+    x_lens_mlx = torch_to_mlx(x_lens)
+    prompt_mlx = torch_to_mlx(prompt)
+    style_mlx = torch_to_mlx(style)
+    x_mlx = torch_to_mlx(x)
+    t_mlx = torch_to_mlx(t)
+    
+    # 验证转换一致性
+    print('\\n6. 验证转换一致性...')
+    mu_diff = np.abs(mu.cpu().numpy() - mlx_to_torch(mu_mlx).cpu().numpy())
+    x_lens_diff = np.abs(x_lens.cpu().numpy() - mlx_to_torch(x_lens_mlx).cpu().numpy())
+    prompt_diff = np.abs(prompt.cpu().numpy() - mlx_to_torch(prompt_mlx).cpu().numpy())
+    style_diff = np.abs(style.cpu().numpy() - mlx_to_torch(style_mlx).cpu().numpy())
+    x_diff = np.abs(x.cpu().numpy() - mlx_to_torch(x_mlx).cpu().numpy())
+    t_diff = np.abs(t.cpu().numpy() - mlx_to_torch(t_mlx).cpu().numpy())
+    
+    print(f'   转换差异:')
+    print(f'   mu_diff: 最大 {mu_diff.max():.10f}, 平均 {mu_diff.mean():.10f}')
+    print(f'   x_lens_diff: 最大 {x_lens_diff.max():.10f}, 平均 {x_lens_diff.mean():.10f}')
+    print(f'   prompt_diff: 最大 {prompt_diff.max():.10f}, 平均 {prompt_diff.mean():.10f}')
+    print(f'   style_diff: 最大 {style_diff.max():.10f}, 平均 {style_diff.mean():.10f}')
+    print(f'   x_diff: 最大 {x_diff.max():.10f}, 平均 {x_diff.mean():.10f}')
+    print(f'   t_diff: 最大 {t_diff.max():.10f}, 平均 {t_diff.mean():.10f}')
+    
+    # 直接调用PyTorch CFM
+    print('\\n7. 直接调用PyTorch CFM...')
+    try:
+        pytorch_cfm = tts.s2mel.models.cfm
+        
+        # 使用CFM的inference方法
+        with torch.no_grad():
+            pytorch_output = pytorch_cfm.inference(
+                mu=mu,
+                x_lens=x_lens,
+                prompt=prompt,
+                style=style,
+                f0=None,
+                n_timesteps=25,
+                temperature=1.0,
+                inference_cfg_rate=0.7
+            )
+        
+        print(f'   PyTorch CFM输出: {pytorch_output.shape}')
+        print(f'   PyTorch CFM输出范围: [{pytorch_output.min():.6f}, {pytorch_output.max():.6f}]')
+        print(f'   PyTorch CFM输出均值: {pytorch_output.mean():.6f}, 标准差: {pytorch_output.std():.6f}')
+        
+    except Exception as e:
+        print(f'   ❌ PyTorch CFM调用失败: {e}')
+        return False
+    
+    # 直接调用MLX CFM
+    print('\\n8. 直接调用MLX CFM...')
+    try:
+        mlx_cfm = tts.mlx_s2mel_cfm
+        if mlx_cfm is None:
+            print("   MLX CFM未初始化，尝试手动创建...")
+            from indextts.s2mel.modules.mlx_cfm import MLXCFM
+            mlx_cfm = MLXCFM(tts.cfg.s2mel)
+            print("   MLX CFM手动创建成功")
+        
+        # 使用MLX CFM的inference方法
+        mlx_output = mlx_cfm.inference(
+            mu=mu_mlx,
+            x_lens=x_lens_mlx,
+            prompt=prompt_mlx,
+            style=style_mlx,
+            f0=None,
+            n_timesteps=25,
+            temperature=1.0,
+            inference_cfg_rate=0.7
         )
         
-        print('\\n✅ MLX 推理完成，获取缓存输入')
+        print(f'   MLX CFM输出: {mlx_output.shape}')
+        print(f'   MLX CFM输出范围: [{mlx_output.min():.6f}, {mlx_output.max():.6f}]')
+        print(f'   MLX CFM输出均值: {mlx_output.mean():.6f}, 标准差: {mlx_output.std():.6f}')
         
-        # 检查是否有缓存输入文件
-        if os.path.exists('cfm_inputs_mlx.pkl'):
-            print('\\n=== 加载缓存输入数据 ===')
-            with open('cfm_inputs_mlx.pkl', 'rb') as f:
-                cached_inputs = pickle.load(f)
-            
-            # 提取输入数据
-            cat_condition = cached_inputs['cat_condition']
-            x_lens = cached_inputs['x_lens']
-            ref_mel = cached_inputs['ref_mel']
-            style = cached_inputs['style']
-            diffusion_steps = cached_inputs['diffusion_steps']
-            inference_cfg_rate = cached_inputs['inference_cfg_rate']
-            
-            print(f'\\n=== 步骤1: 分析estimator结构差异 ===')
-            
-            # 分析PyTorch CFM权重
-            pytorch_cfm = tts_mlx.s2mel.models['cfm']
-            pytorch_estimator = pytorch_cfm.estimator
-            print(f'\\n--- PyTorch CFM 结构分析 ---')
-            print(f'PyTorch CFM 类型: {type(pytorch_cfm)}')
-            print(f'PyTorch CFM estimator 类型: {type(pytorch_estimator)}')
-            
-            # 分析MLX CFM权重
-            mlx_cfm = tts_mlx.mlx_s2mel_cfm
-            mlx_estimator = mlx_cfm.estimator
-            print(f'\\n--- MLX CFM 结构分析 ---')
-            print(f'MLX CFM 类型: {type(mlx_cfm)}')
-            print(f'MLX CFM estimator 类型: {type(mlx_estimator)}')
-            
-            print(f'\\n=== 步骤2: 分析单步推理差异 ===')
-            
-            # 准备单步推理的输入
-            tts_mlx.unified_random.reset_seed(42)
-            
-            # 确保所有输入都在正确的设备上
-            cat_condition_device = cat_condition.to(tts_mlx.device)
-            ref_mel_device = ref_mel.to(tts_mlx.device)
-            style_device = style.to(tts_mlx.device)
-            
-            # 转换为 MLX
-            cat_condition_mlx = torch_to_mlx(cat_condition_device.cpu())
-            x_lens_mlx = torch_to_mlx(x_lens.cpu())
-            ref_mel_mlx = torch_to_mlx(ref_mel_device.cpu())
-            style_mlx = torch_to_mlx(style_device.cpu())
-            
-            # 准备噪声
-            B, T = cat_condition_device.size(0), cat_condition_device.size(1)
-            z_pytorch = tts_mlx.unified_random.generate_noise((B, 80, T), device=tts_mlx.device)
-            z_mlx = tts_mlx.unified_random.generate_noise_mlx((B, 80, T))
-            
-            # 准备prompt
-            prompt_len = ref_mel_device.size(-1)
-            prompt_x_pytorch = torch.zeros_like(z_pytorch)
-            prompt_x_pytorch[..., :prompt_len] = ref_mel_device[..., :prompt_len]
-            x_pytorch = z_pytorch.clone()
-            x_pytorch[..., :prompt_len] = 0
-            
-            prompt_x_mlx = mx.zeros_like(z_mlx)
-            prompt_x_mlx[:, :, :prompt_len] = ref_mel_mlx[:, :, :prompt_len]
-            x_mlx = z_mlx
-            x_mlx = mx.concatenate([mx.zeros_like(x_mlx[:, :, :prompt_len]), x_mlx[:, :, prompt_len:]], axis=2)
-            
-            # 时间步
-            t = 0.0
-            t_tensor = torch.tensor([t], device=tts_mlx.device)
-            t_scalar = mx.array([t])
-            
-            print(f'\\n--- 单步推理输入对比 ---')
-            print(f'PyTorch x: {x_pytorch.shape}, 范围 [{x_pytorch.min():.6f}, {x_pytorch.max():.6f}]')
-            print(f'MLX x: {x_mlx.shape}, 范围 [{x_mlx.min():.6f}, {x_mlx.max():.6f}]')
-            print(f'PyTorch prompt_x: {prompt_x_pytorch.shape}, 范围 [{prompt_x_pytorch.min():.6f}, {prompt_x_pytorch.max():.6f}]')
-            print(f'MLX prompt_x: {prompt_x_mlx.shape}, 范围 [{prompt_x_mlx.min():.6f}, {prompt_x_mlx.max():.6f}]')
-            
-            # 单步推理
-            print(f'\\n--- 单步推理输出对比 ---')
-            
-            # PyTorch 单步推理
-            try:
-                dphi_dt_pytorch = pytorch_estimator(
-                    x_pytorch, prompt_x_pytorch, x_lens, t_tensor, style_device, cat_condition_device
-                )
-                print(f'PyTorch 单步输出: {dphi_dt_pytorch.shape}, 范围 [{dphi_dt_pytorch.min():.6f}, {dphi_dt_pytorch.max():.6f}]')
-                print(f'PyTorch 单步输出 mean: {dphi_dt_pytorch.mean():.6f}, std: {dphi_dt_pytorch.std():.6f}')
-            except Exception as e:
-                print(f'PyTorch 单步推理失败: {e}')
-                dphi_dt_pytorch = None
-            
-            # MLX 单步推理
-            try:
-                dphi_dt_mlx = mlx_estimator(
-                    x_mlx, prompt_x_mlx, x_lens_mlx, t_scalar, style_mlx, cat_condition_mlx
-                )
-                print(f'MLX 单步输出: {dphi_dt_mlx.shape}, 范围 [{dphi_dt_mlx.min():.6f}, {dphi_dt_mlx.max():.6f}]')
-                print(f'MLX 单步输出 mean: {dphi_dt_mlx.mean():.6f}, std: {dphi_dt_mlx.std():.6f}')
-            except Exception as e:
-                print(f'MLX 单步推理失败: {e}')
-                dphi_dt_mlx = None
-            
-            # 对比单步输出
-            if dphi_dt_pytorch is not None and dphi_dt_mlx is not None:
-                dphi_dt_mlx_torch = mlx_to_torch(dphi_dt_mlx).to(tts_mlx.device)
-                step_diff = torch.abs(dphi_dt_pytorch - dphi_dt_mlx_torch)
-                print(f'\\n--- 单步输出差异分析 ---')
-                print(f'单步输出差异: 最大 {torch.max(step_diff):.6f}, 平均 {torch.mean(step_diff):.6f}')
-                print(f'PyTorch 数值范围: {torch.max(dphi_dt_pytorch) - torch.min(dphi_dt_pytorch):.6f}')
-                print(f'MLX 数值范围: {torch.max(dphi_dt_mlx_torch) - torch.min(dphi_dt_mlx_torch):.6f}')
-                print(f'数值范围比例: {(torch.max(dphi_dt_pytorch) - torch.min(dphi_dt_pytorch)) / (torch.max(dphi_dt_mlx_torch) - torch.min(dphi_dt_mlx_torch)):.2f}')
-                
-                # 分析差异分布
-                large_diff_count = torch.sum(step_diff > 1.0).item()
-                total_elements = step_diff.numel()
-                print(f'大差异元素数 (>1.0): {large_diff_count} / {total_elements} ({large_diff_count/total_elements*100:.2f}%)')
-                
-                # 显示前几个大差异的位置
-                large_diff_indices = torch.where(step_diff > 1.0)
-                if len(large_diff_indices[0]) > 0:
-                    print(f'\\n前10个大差异位置:')
-                    for i in range(min(10, len(large_diff_indices[0]))):
-                        idx = tuple(torch.tensor([large_diff_indices[j][i] for j in range(len(large_diff_indices))]))
-                        pytorch_val = dphi_dt_pytorch[idx].item()
-                        mlx_val = dphi_dt_mlx_torch[idx].item()
-                        diff_val = step_diff[idx].item()
-                        print(f'  位置 {idx}: PyTorch={pytorch_val:.6f}, MLX={mlx_val:.6f}, 差异={diff_val:.6f}')
-            
-            print(f'\\n=== 步骤3: 分析estimator内部结构差异 ===')
-            
-            # 分析PyTorch estimator的内部结构
-            print(f'\\n--- PyTorch Estimator 内部结构 ---')
-            pytorch_modules = {}
-            for name, module in pytorch_estimator.named_modules():
-                if len(name) > 0:  # 跳过根模块
-                    pytorch_modules[name] = module
-                    print(f'{name}: {type(module)}')
-                    if hasattr(module, 'weight') and module.weight is not None:
-                        print(f'  权重形状: {module.weight.shape}, 范围 [{module.weight.min():.6f}, {module.weight.max():.6f}]')
-                    if hasattr(module, 'bias') and module.bias is not None:
-                        print(f'  偏置形状: {module.bias.shape}, 范围 [{module.bias.min():.6f}, {module.bias.max():.6f}]')
-            
-            # 分析MLX estimator的内部结构
-            print(f'\\n--- MLX Estimator 内部结构 ---')
-            mlx_modules = {}
-            for name, module in mlx_estimator.named_modules():
-                if len(name) > 0:  # 跳过根模块
-                    mlx_modules[name] = module
-                    print(f'{name}: {type(module)}')
-                    if hasattr(module, 'weight') and module.weight is not None:
-                        print(f'  权重形状: {module.weight.shape}, 范围 [{module.weight.min():.6f}, {module.weight.max():.6f}]')
-                    if hasattr(module, 'bias') and module.bias is not None:
-                        print(f'  偏置形状: {module.bias.shape}, 范围 [{module.bias.min():.6f}, {module.bias.max():.6f}]')
-            
-            print(f'\\n=== 步骤4: 分析权重数值差异 ===')
-            
-            # 对比共同权重的数值差异
-            pytorch_keys = set(pytorch_modules.keys())
-            mlx_keys = set(mlx_modules.keys())
-            common_keys = pytorch_keys.intersection(mlx_keys)
-            
-            print(f'\\n--- 权重键对比 ---')
-            print(f'PyTorch 模块数: {len(pytorch_keys)}')
-            print(f'MLX 模块数: {len(mlx_keys)}')
-            print(f'共同模块数: {len(common_keys)}')
-            
-            if common_keys:
-                print(f'\\n--- 权重数值对比 (前10个共同模块) ---')
-                for i, key in enumerate(list(common_keys)[:10]):
-                    pytorch_module = pytorch_modules[key]
-                    mlx_module = mlx_modules[key]
-                    
-                    print(f'{key}:')
-                    print(f'  PyTorch: {type(pytorch_module)}')
-                    print(f'  MLX: {type(mlx_module)}')
-                    
-                    # 对比权重
-                    if hasattr(pytorch_module, 'weight') and hasattr(mlx_module, 'weight'):
-                        pytorch_weight = pytorch_module.weight
-                        mlx_weight = mlx_module.weight
-                        
-                        # 转换MLX权重为PyTorch格式
-                        if isinstance(mlx_weight, mx.array):
-                            mlx_weight_torch = mlx_to_torch(mlx_weight).to(tts_mlx.device)
-                        else:
-                            mlx_weight_torch = mlx_weight
-                        
-                        # 确保形状一致
-                        if pytorch_weight.shape == mlx_weight_torch.shape:
-                            weight_diff = torch.abs(pytorch_weight - mlx_weight_torch)
-                            print(f'  权重差异: 最大 {torch.max(weight_diff):.6f}, 平均 {torch.mean(weight_diff):.6f}')
-                            
-                            if torch.max(weight_diff) > 1e-5:
-                                print(f'  ❌ 权重差异超过阈值')
-                            else:
-                                print(f'  ✅ 权重差异在阈值内')
-                        else:
-                            print(f'  权重形状不匹配 - PyTorch: {pytorch_weight.shape}, MLX: {mlx_weight_torch.shape}')
-                    
-                    # 对比偏置
-                    if hasattr(pytorch_module, 'bias') and hasattr(mlx_module, 'bias'):
-                        pytorch_bias = pytorch_module.bias
-                        mlx_bias = mlx_module.bias
-                        
-                        if pytorch_bias is not None and mlx_bias is not None:
-                            # 转换MLX偏置为PyTorch格式
-                            if isinstance(mlx_bias, mx.array):
-                                mlx_bias_torch = mlx_to_torch(mlx_bias).to(tts_mlx.device)
-                            else:
-                                mlx_bias_torch = mlx_bias
-                            
-                            # 确保形状一致
-                            if pytorch_bias.shape == mlx_bias_torch.shape:
-                                bias_diff = torch.abs(pytorch_bias - mlx_bias_torch)
-                                print(f'  偏置差异: 最大 {torch.max(bias_diff):.6f}, 平均 {torch.mean(bias_diff):.6f}')
-                                
-                                if torch.max(bias_diff) > 1e-5:
-                                    print(f'  ❌ 偏置差异超过阈值')
-                                else:
-                                    print(f'  ✅ 偏置差异在阈值内')
-                            else:
-                                print(f'  偏置形状不匹配 - PyTorch: {pytorch_bias.shape}, MLX: {mlx_bias_torch.shape}')
-            
-            print(f'\\n=== 步骤5: 分析estimator类型差异 ===')
-            
-            # 分析estimator类型差异
-            print(f'\\n--- Estimator 类型差异分析 ---')
-            print(f'PyTorch Estimator 类型: {type(pytorch_estimator)}')
-            print(f'MLX Estimator 类型: {type(mlx_estimator)}')
-            
-            # 检查是否是同一个类
-            if type(pytorch_estimator) == type(mlx_estimator):
-                print(f'✅ Estimator 类型相同')
-            else:
-                print(f'❌ Estimator 类型不同')
-                print(f'  PyTorch: {type(pytorch_estimator).__name__}')
-                print(f'  MLX: {type(mlx_estimator).__name__}')
-            
-            # 检查模块结构
-            print(f'\\n--- 模块结构对比 ---')
-            pytorch_module_names = set(pytorch_modules.keys())
-            mlx_module_names = set(mlx_modules.keys())
-            
-            print(f'PyTorch 模块: {len(pytorch_module_names)}')
-            print(f'MLX 模块: {len(mlx_module_names)}')
-            print(f'共同模块: {len(pytorch_module_names.intersection(mlx_module_names))}')
-            print(f'仅PyTorch: {len(pytorch_module_names - mlx_module_names)}')
-            print(f'仅MLX: {len(mlx_module_names - pytorch_module_names)}')
-            
-            if pytorch_module_names - mlx_module_names:
-                print(f'\\n仅PyTorch的模块: {list(pytorch_module_names - mlx_module_names)[:10]}...')
-            if mlx_module_names - pytorch_module_names:
-                print(f'\\n仅MLX的模块: {list(mlx_module_names - pytorch_module_names)[:10]}...')
-            
-            # 保存分析结果
-            analysis_results = {
-                'pytorch_modules': pytorch_module_names,
-                'mlx_modules': mlx_module_names,
-                'common_modules': pytorch_module_names.intersection(mlx_module_names),
-                'pytorch_only': pytorch_module_names - mlx_module_names,
-                'mlx_only': mlx_module_names - pytorch_module_names,
-                'single_step_pytorch': dphi_dt_pytorch.detach().cpu() if dphi_dt_pytorch is not None else None,
-                'single_step_mlx': dphi_dt_mlx_torch.detach().cpu() if dphi_dt_mlx is not None else None,
-                'single_step_diff': step_diff.detach().cpu() if dphi_dt_pytorch is not None and dphi_dt_mlx is not None else None
-            }
-            
-            with open('cfm_differences_analysis_fixed.pkl', 'wb') as f:
-                pickle.dump(analysis_results, f)
-            print('\\n详细分析结果已保存到 cfm_differences_analysis_fixed.pkl')
-            
-        else:
-            print('❌ 缓存输入文件不存在')
-            
     except Exception as e:
-        print(f'❌ 分析过程出错: {e}')
-        import traceback
-        traceback.print_exc()
+        print(f'   ❌ MLX CFM调用失败: {e}')
+        return False
+    
+    # 比较输出差异
+    print('\\n9. 比较输出差异...')
+    pytorch_output_np = pytorch_output.cpu().numpy()
+    mlx_output_np = mlx_output
+    
+    output_diff = np.abs(pytorch_output_np - mlx_output_np)
+    max_diff = output_diff.max()
+    mean_diff = output_diff.mean()
+    
+    print(f'   输出差异:')
+    print(f'   最大差异: {max_diff:.6f}')
+    print(f'   平均差异: {mean_diff:.6f}')
+    print(f'   差异分布:')
+    print(f'   - 差异 < 1e-5: {np.sum(output_diff < 1e-5)} / {output_diff.size} ({100*np.sum(output_diff < 1e-5)/output_diff.size:.1f}%)')
+    print(f'   - 差异 < 1e-3: {np.sum(output_diff < 1e-3)} / {output_diff.size} ({100*np.sum(output_diff < 1e-3)/output_diff.size:.1f}%)')
+    print(f'   - 差异 < 1e-1: {np.sum(output_diff < 1e-1)} / {output_diff.size} ({100*np.sum(output_diff < 1e-1)/output_diff.size:.1f}%)')
+    print(f'   - 差异 < 1.0: {np.sum(output_diff < 1.0)} / {output_diff.size} ({100*np.sum(output_diff < 1.0)/output_diff.size:.1f}%)')
+    
+    # 分析大差异位置
+    print('\\n10. 分析大差异位置...')
+    large_diff_mask = output_diff > 1.0
+    if np.any(large_diff_mask):
+        large_diff_indices = np.where(large_diff_mask)
+        print(f'   大差异位置数: {len(large_diff_indices[0])}')
+        print(f'   前5个大差异位置:')
+        for i in range(min(5, len(large_diff_indices[0]))):
+            idx = tuple(large_diff_indices[j][i] for j in range(len(large_diff_indices)))
+            pytorch_val = pytorch_output_np[idx]
+            # 修复MLX数组索引问题
+            mlx_val = float(mlx_output_np[idx])
+            diff_val = output_diff[idx]
+            print(f'     位置 {idx}: PyTorch={pytorch_val:.6f}, MLX={mlx_val:.6f}, 差异={diff_val:.6f}')
+    else:
+        print('   ✅ 没有大差异位置')
+    
+    # 保存分析结果
+    print('\\n11. 保存分析结果...')
+    analysis_result = {
+        'cached_inputs': {
+            'cat_condition': cat_condition.cpu().numpy(),
+            'x_lens': x_lens.cpu().numpy(),
+            'ref_mel': ref_mel.cpu().numpy(),
+            'style': style.cpu().numpy(),
+            'diffusion_steps': diffusion_steps,
+            'inference_cfg_rate': inference_cfg_rate
+        },
+        'cfm_inputs': {
+            'x': x.cpu().numpy(),
+            'prompt_x': prompt_x.cpu().numpy(),
+            't': t.cpu().numpy(),
+            'style': style.cpu().numpy(),
+            'cond': cond.cpu().numpy(),
+            'x_lens': x_lens.cpu().numpy()
+        },
+        'pytorch_output': pytorch_output_np,
+        'mlx_output': mlx_output_np,
+        'output_diff': output_diff,
+        'max_diff': max_diff,
+        'mean_diff': mean_diff,
+        'diff_distribution': {
+            'lt_1e5': np.sum(output_diff < 1e-5),
+            'lt_1e3': np.sum(output_diff < 1e-3),
+            'lt_1e1': np.sum(output_diff < 1e-1),
+            'lt_1_0': np.sum(output_diff < 1.0),
+            'total': output_diff.size
+        }
+    }
+    
+    with open('cfm_cached_inputs_analysis.pkl', 'wb') as f:
+        pickle.dump(analysis_result, f)
+    
+    print(f'   分析结果已保存到: cfm_cached_inputs_analysis.pkl')
+    
+    # 总结
+    print('\\n12. 总结...')
+    if max_diff < 1e-5:
+        print('   ✅ CFM输出差异在e-5范围内，完全一致')
+    elif max_diff < 1e-3:
+        print('   ✅ CFM输出差异在e-3范围内，基本一致')
+    elif max_diff < 1e-1:
+        print('   ⚠️ CFM输出差异在e-1范围内，有轻微差异')
+    else:
+        print('   ❌ CFM输出差异较大，需要进一步分析')
+    
+    return True
 
 if __name__ == "__main__":
-    analyze_cfm_differences()
+    try:
+        success = analyze_cfm_differences()
+        if success:
+            print("\\n✅ CFM缓存输入分析完成")
+        else:
+            print("\\n❌ CFM缓存输入分析失败")
+    except Exception as e:
+        print(f"\\n❌ 分析失败: {e}")
+        import traceback
+        traceback.print_exc()

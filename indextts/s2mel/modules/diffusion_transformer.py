@@ -96,8 +96,6 @@ class FinalLayer(nn.Module):
 
     def forward(self, x, c):
         # 逐层调试：记录final_layer输入
-        print(f">> [PyTorch FinalLayer Debug] 输入:")
-        print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}, mean={x.mean():.6f}")
         print(f"   c: {c.shape}, min={c.min():.6f}, max={c.max():.6f}, mean={c.mean():.6f}")
         
         c_emb = self.adaLN_modulation(c)

@@ -113,8 +113,6 @@ class MLXFinalLayerRewritten(nn.Module):
         Returns: (batch, seq_len, patch_size * patch_size * out_channels)
         """
         # 逐层调试：记录final_layer输入
-        print(f">> [MLX FinalLayer Debug] 输入:")
-        print(f"   x: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}, mean={float(x.mean()):.6f}")
         print(f"   c: {c.shape}, min={float(c.min()):.6f}, max={float(c.max()):.6f}, mean={float(c.mean()):.6f}")
         
         # 与PyTorch版本完全一致
@@ -245,8 +243,6 @@ class MLXDiTRewritten(nn.Module):
         import torch
         
         # 逐层调试：记录输入
-        print(f">> [MLX DiT Debug] 输入:")
-        print(f"   x: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
         print(f"   prompt_x: {prompt_x.shape}, min={float(prompt_x.min()):.6f}, max={float(prompt_x.max()):.6f}")
         print(f"   t: {t.shape}, min={float(t.min()):.6f}, max={float(t.max()):.6f}")
         print(f"   style: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
@@ -272,24 +268,15 @@ class MLXDiTRewritten(nn.Module):
         if t.ndim == 0:
             t = mx.array([t.item()])
         t_emb = self.t_embedder(t)  # (batch, hidden_dim)
-        print(f">> [MLX DiT Debug] t_emb: {t_emb.shape}, min={float(t_emb.min()):.6f}, max={float(t_emb.max()):.6f}")
-        
-        # Project conditioning - 与PyTorch版本完全一致
+                # Project conditioning - 与PyTorch版本完全一致
         # 注意：PyTorch版本总是使用cond_projection，不管content_type
         cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
-        print(f">> [MLX DiT Debug] cond_proj: {cond_proj.shape}, min={float(cond_proj.min()):.6f}, max={float(cond_proj.max()):.6f}")
-        
-        # Transpose x and prompt_x to (batch, seq_len, channels) - 与PyTorch版本完全一致
+                # Transpose x and prompt_x to (batch, seq_len, channels) - 与PyTorch版本完全一致
         x_t = x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
         prompt_x_t = prompt_x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
-        print(f">> [MLX DiT Debug] x_t: {x_t.shape}, min={float(x_t.min()):.6f}, max={float(x_t.max()):.6f}")
-        print(f">> [MLX DiT Debug] prompt_x_t: {prompt_x_t.shape}, min={float(prompt_x_t.min()):.6f}, max={float(prompt_x_t.max()):.6f}")
-        
-        # Concatenate inputs: [x, prompt_x, cond] - 与PyTorch版本完全一致
+                        # Concatenate inputs: [x, prompt_x, cond] - 与PyTorch版本完全一致
         x_in = mx.concatenate([x_t, prompt_x_t, cond_proj], axis=-1)
-        print(f">> [MLX DiT Debug] x_in (after concat): {x_in.shape}, min={float(x_in.min()):.6f}, max={float(x_in.max()):.6f}")
-        
-        # Add style conditioning if not using style_as_token - 与PyTorch版本完全一致
+                # Add style conditioning if not using style_as_token - 与PyTorch版本完全一致
         if self.transformer_style_condition and not self.style_as_token:
             # Broadcast style to all timesteps
             style_broadcast = mx.broadcast_to(
@@ -297,9 +284,7 @@ class MLXDiTRewritten(nn.Module):
                 (batch, seq_len, style.shape[-1])
             )
             x_in = mx.concatenate([x_in, style_broadcast], axis=-1)
-            print(f">> [MLX DiT Debug] x_in (after style): {x_in.shape}, min={float(x_in.min()):.6f}, max={float(x_in.max()):.6f}")
-        
-        # Apply masking for CFG - 与PyTorch版本完全一致
+                    # Apply masking for CFG - 与PyTorch版本完全一致
         # 在推理模式下，class_dropout应该为False
         class_dropout = False
         if mask_content:
@@ -311,13 +296,9 @@ class MLXDiTRewritten(nn.Module):
                 x_in[:, :, :self.in_channels * 2],  # Keep x and prompt_x
                 mx.zeros_like(x_in[:, :, self.in_channels * 2:])  # Zero out rest
             ], axis=-1)
-            print(f">> [MLX DiT Debug] x_in (after mask): {x_in.shape}, min={float(x_in.min()):.6f}, max={float(x_in.max()):.6f}")
-        
-        # Merge inputs to hidden_dim - 与PyTorch版本完全一致
+                    # Merge inputs to hidden_dim - 与PyTorch版本完全一致
         x_in = self.cond_x_merge_linear(x_in)  # (batch, seq_len, hidden_dim)
-        print(f">> [MLX DiT Debug] x_in (after merge): {x_in.shape}, min={float(x_in.min()):.6f}, max={float(x_in.max()):.6f}")
-        
-        # Add style/time as tokens if needed - 与PyTorch版本完全一致
+                # Add style/time as tokens if needed - 与PyTorch版本完全一致
         if self.style_as_token:
             style_tok = self.style_in(style).reshape(batch, 1, -1)
             if mask_content:
@@ -347,11 +328,7 @@ class MLXDiTRewritten(nn.Module):
             mask_expanded = None
         
         # Forward through Transformer - 与PyTorch版本完全一致
-        print(f">> [MLX DiT Debug] Transformer输入:")
-        print(f"   x_in: {x_in.shape}, min={float(x_in.min()):.6f}, max={float(x_in.max()):.6f}")
-        print(f"   t_emb: {t_emb.shape}, min={float(t_emb.min()):.6f}, max={float(t_emb.max()):.6f}")
-        print(f"   input_pos: {input_pos.shape}")
-        print(f"   mask: {mask_expanded.shape if mask_expanded is not None else None}")
+        # 调试输出已移除
         
         x_res = self.transformer(
             x_in,
@@ -360,8 +337,7 @@ class MLXDiTRewritten(nn.Module):
             mask=mask_expanded
         )
         
-        print(f">> [MLX DiT Debug] Transformer输出:")
-        print(f"   x_res: {x_res.shape}, min={float(x_res.min()):.6f}, max={float(x_res.max()):.6f}")
+        # 调试输出已移除
         
         # Remove added tokens - 与PyTorch版本完全一致
         if self.time_as_token:
@@ -377,9 +353,7 @@ class MLXDiTRewritten(nn.Module):
         if self.final_layer_type == 'wavenet':
             # WaveNet path
             x_out = self.conv1(x_res)  # (batch, seq_len, wavenet_dim)
-            print(f">> [MLX DiT Debug] conv1输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-            
-            # Create mask for WaveNet
+                        # Create mask for WaveNet
             positions = mx.arange(x_out.shape[1]).reshape(1, 1, -1)
             if x_lens.ndim == 0:
                 x_lens = mx.array([x_lens.item()])
@@ -389,35 +363,22 @@ class MLXDiTRewritten(nn.Module):
             # Get timestep embedding for WaveNet
             t2_emb = self.t_embedder2(t)  # (batch, wavenet_dim)
             t2_emb_expanded = mx.broadcast_to(t2_emb[:, None, :], (batch, x_out.shape[1], t2_emb.shape[-1]))
-            print(f">> [MLX DiT Debug] WaveNet输入: x_out={x_out.shape}, x_mask={x_mask.shape}, g={t2_emb_expanded.shape}")
-            
-            # WaveNet forward
+                        # WaveNet forward
             x_out = self.wavenet(x_out, x_mask, g=t2_emb_expanded)
-            print(f">> [MLX DiT Debug] WaveNet输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-            
-            # Add residual from transformer
+                        # Add residual from transformer
             x_out = x_out + self.res_projection(x_res)
-            print(f">> [MLX DiT Debug] 残差连接后: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-            
             # Final layer with AdaLN
             x_out = self.final_layer(x_out, t_emb)  # (batch, seq_len, wavenet_dim)
-            print(f">> [MLX DiT Debug] final_layer输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-            
             # Final conv (1x1)
             x_out = self.conv2(x_out)  # (batch, seq_len, in_channels)
-            print(f">> [MLX DiT Debug] conv2输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
         else:
             # MLP path - 与PyTorch版本完全一致
             x_out = self.final_mlp_0(x_res)
             x_out = nn.silu(x_out)
             x_out = self.final_mlp_2(x_out)
-            print(f">> [MLX DiT Debug] MLP输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-        
         # Transpose back to (batch, out_channels, seq_len) - 与PyTorch版本完全一致
         x_out = x_out.transpose(0, 2, 1)
-        print(f">> [MLX DiT Debug] 最终输出: {x_out.shape}, min={float(x_out.min()):.6f}, max={float(x_out.max()):.6f}")
-        
-        # Convert back to PyTorch if needed
+                # Convert back to PyTorch if needed
         if convert_back:
             from indextts.utils.mlx_utils import mlx_to_torch
             x_out = mlx_to_torch(x_out, device='mps')
@@ -473,12 +434,7 @@ class MLXCFMRewritten(nn.Module):
             # 计算时间步长 - 与PyTorch版本完全一致
             dt = t_span[step] - t_span[step - 1]
             
-            # 逐层调试输出
-            if debug_layers:
-                print(f"\n>> [MLX CFM Rewritten Debug] Step {step}:")
-                print(f"   x: min={float(x.min()):.6f}, max={float(x.max()):.6f}, mean={float(x.mean()):.6f}")
-                print(f"   t: {float(t):.6f}")
-                print(f"   dt: {float(dt):.6f}")
+            # 调试输出已移除
             
             if inference_cfg_rate > 0:
                 # Classifier-free guidance - 与PyTorch版本完全一致

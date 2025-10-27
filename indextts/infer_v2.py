@@ -1025,9 +1025,7 @@ class IndexTTS2:
                                 )
                                 print(f">> [MLX Consistency] Using MLX get_conditioning for PyTorch-MLX consistency")
                                 
-                                # 调试：记录MLX GPT生成后的输出
-                                print(f">> [MLX GPT Debug] GPT生成后:")
-                                print(f"   codes: {codes.shape}, min={codes.min():.6f}, max={codes.max():.6f}")
+                                # 调试输出已移除
                                 print(f"   speech_conditioning_latent: {speech_conditioning_latent.shape}, min={speech_conditioning_latent.min():.6f}, max={speech_conditioning_latent.max():.6f}")
                                 
                                 # 保存MLX GPT输出到文件
@@ -1038,9 +1036,7 @@ class IndexTTS2:
                                 }
                                 with open('gpt_outputs_mlx.pkl', 'wb') as f:
                                     pickle.dump(gpt_outputs_mlx, f)
-                                print(f">> [MLX GPT Debug] GPT输出已保存到 gpt_outputs_mlx.pkl")
-                                
-                                # 🔥 关键：缓存MLX格式
+                                                                # 🔥 关键：缓存MLX格式
                                 if cond_latent_mlx is not None:
                                     self.cache_gpt_conditioning_latent_mlx = cond_latent_mlx
                                     print(f">> [Cache] GPT conditioning cached (MLX native)")
@@ -1079,9 +1075,7 @@ class IndexTTS2:
                             **generation_kwargs
                         )
                         
-                        # 调试：记录MLX GPT生成后的输出
-                        print(f">> [MLX GPT Debug] GPT生成后:")
-                        print(f"   codes: {codes.shape}, min={codes.min():.6f}, max={codes.max():.6f}")
+                        # 调试输出已移除
                         print(f"   speech_conditioning_latent: {speech_conditioning_latent.shape}, min={speech_conditioning_latent.min():.6f}, max={speech_conditioning_latent.max():.6f}")
                         
                         # 保存MLX GPT输出到文件
@@ -1092,9 +1086,7 @@ class IndexTTS2:
                         }
                         with open('gpt_outputs_mlx.pkl', 'wb') as f:
                             pickle.dump(gpt_outputs_mlx, f)
-                        print(f">> [MLX GPT Debug] GPT输出已保存到 gpt_outputs_mlx.pkl")
-
-                gpt_gen_time += time.perf_counter() - m_start_time
+                        gpt_gen_time += time.perf_counter() - m_start_time
                 self._print_mps_memory(f"GPT生成后(段落{seg_idx+1})")
                 if not has_warned and (codes[:, -1] != self.stop_mel_token).any():
                     warnings.warn(
@@ -1246,9 +1238,7 @@ class IndexTTS2:
                         import mlx.core as mx
                         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
                         
-                        # 调试：记录MLX CFM输入
-                        print(f">> [MLX CFM Debug] CFM输入:")
-                        print(f"   cat_condition: {cat_condition.shape}, min={cat_condition.min():.6f}, max={cat_condition.max():.6f}")
+                        # 调试输出已移除
                         print(f"   x_lens: {cat_condition.size(1)}")
                         print(f"   ref_mel: {ref_mel.shape}, min={ref_mel.min():.6f}, max={ref_mel.max():.6f}")
                         print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
@@ -1273,10 +1263,7 @@ class IndexTTS2:
                         }
                         with open('cfm_inputs_mlx.pkl', 'wb') as f:
                             pickle.dump(cfm_inputs_mlx, f)
-                        print(f">> [MLX CFM Debug] CFM输入已保存到 cfm_inputs_mlx.pkl")
-                        
-                        # 🔥 使用 MLX CFM 进行推理
-                        print(">> [MLX CFM Debug] 使用 MLX CFM 进行推理")
+                                                # 🔥 使用 MLX CFM 进行推理
                         
                         # 使用 MLX CFM 推理
                         vc_target_mlx = self.mlx_s2mel_cfm.inference(
@@ -1290,16 +1277,12 @@ class IndexTTS2:
                             unified_random=self.unified_random
                         )
                         
-                        print(f">> [MLX CFM Debug] MLX CFM 输出:")
-                        print(f"   vc_target: {vc_target_mlx.shape}, min={vc_target_mlx.min():.6f}, max={vc_target_mlx.max():.6f}")
-                        print(f"   vc_target mean: {vc_target_mlx.mean():.6f}, std: {vc_target_mlx.std():.6f}")
+                        # 调试输出已移除
                         
                         # 将 MLX 输出转换为 PyTorch tensor
                         vc_target = mlx_to_torch(vc_target_mlx).to(self.device)
                         
-                        print(f">> [MLX CFM Debug] 转换后的 PyTorch 输出:")
-                        print(f"   vc_target: {vc_target.shape}, min={vc_target.min():.6f}, max={vc_target.max():.6f}")
-                        print(f"   vc_target mean: {vc_target.mean():.6f}, std: {vc_target.std():.6f}")
+                        # 调试输出已移除
                         
                         # 保存 MLX CFM 输出到文件
                         cfm_outputs_mlx = {
@@ -1307,9 +1290,7 @@ class IndexTTS2:
                         }
                         with open('cfm_outputs_mlx.pkl', 'wb') as f:
                             pickle.dump(cfm_outputs_mlx, f)
-                        print(f">> [MLX CFM Debug] MLX CFM 输出已保存到 cfm_outputs_mlx.pkl")
-                        
-                        # 捕获 MLX S2MEL 输出用于调试
+                        # 调试输出已移除
                         self._s2mel_outputs = {
                             'vc_target_shape': vc_target.shape,
                             'vc_target_min': vc_target.min().item(),
@@ -1368,11 +1349,14 @@ class IndexTTS2:
         wav = torch.cat(wavs, dim=1)
         wav_length = wav.shape[-1] / sampling_rate
         print(f">> gpt_gen_time: {gpt_gen_time:.2f} seconds")
-        if gpt_emovec_time > 0:
+        if gpt_emovec_time > 0 and gpt_gen_time > 0:
             # 计算实际generation时间（总时间 - emovec）
             actual_generation = gpt_gen_time - gpt_emovec_time
             print(f"   ├─ emovec: {gpt_emovec_time:.2f}s ({gpt_emovec_time/gpt_gen_time*100:.1f}%)")
             print(f"   └─ MLX inference: {actual_generation:.2f}s ({actual_generation/gpt_gen_time*100:.1f}%)")
+        elif gpt_emovec_time > 0:
+            print(f"   ├─ emovec: {gpt_emovec_time:.2f}s")
+            print(f"   └─ MLX inference: 0.00s (gpt_gen_time=0)")
             if gpt_conditioning_time > 0 or gpt_to_mlx_time > 0 or gpt_from_mlx_time > 0:
                 # Hybrid模式的详细拆分
                 print(f"      ├─ conditioning: {gpt_conditioning_time:.2f}s")

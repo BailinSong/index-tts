@@ -77,8 +77,6 @@ class BASECFM(torch.nn.Module, ABC):
                 shape: (batch_size, 192)
         """
         # 逐层调试：记录输入
-        print(f">> [PyTorch CFM Debug] solve_euler输入:")
-        print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}")
         print(f"   x_lens: {x_lens}")
         print(f"   prompt: {prompt.shape}, min={prompt.min():.6f}, max={prompt.max():.6f}")
         print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
@@ -109,13 +107,7 @@ class BASECFM(torch.nn.Module, ABC):
                 stacked_t = torch.cat([t.unsqueeze(0), t.unsqueeze(0)], dim=0)
 
                 # 逐层调试：记录estimator输入
-                if debug_layers:
-                    print(f">> [PyTorch CFM Debug] Estimator输入:")
-                    print(f"   stacked_x: {stacked_x.shape}, min={stacked_x.min():.6f}, max={stacked_x.max():.6f}")
-                    print(f"   stacked_prompt_x: {stacked_prompt_x.shape}, min={stacked_prompt_x.min():.6f}, max={stacked_prompt_x.max():.6f}")
-                    print(f"   stacked_style: {stacked_style.shape}, min={stacked_style.min():.6f}, max={stacked_style.max():.6f}")
-                    print(f"   stacked_mu: {stacked_mu.shape}, min={stacked_mu.min():.6f}, max={stacked_mu.max():.6f}")
-                    print(f"   stacked_t: {stacked_t.shape}, min={stacked_t.min():.6f}, max={stacked_t.max():.6f}")
+                # 调试输出已移除
 
                 # Perform a single forward pass for both original and CFG inputs
                 stacked_dphi_dt = self.estimator(
@@ -124,8 +116,7 @@ class BASECFM(torch.nn.Module, ABC):
 
                 # 逐层调试：记录estimator输出
                 if debug_layers:
-                    print(f">> [PyTorch CFM Debug] Estimator输出:")
-                    print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
+                                        print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
 
                 # Split the output back into the original and CFG components
                 dphi_dt, cfg_dphi_dt = stacked_dphi_dt.chunk(2, dim=0)
@@ -133,29 +124,15 @@ class BASECFM(torch.nn.Module, ABC):
                 # Apply CFG formula
                 dphi_dt = (1.0 + inference_cfg_rate) * dphi_dt - inference_cfg_rate * cfg_dphi_dt
             else:
-                # 逐层调试：记录estimator输入
-                if debug_layers:
-                    print(f">> [PyTorch CFM Debug] Estimator输入:")
-                    print(f"   x: {x.shape}, min={x.min():.6f}, max={x.max():.6f}")
-                    print(f"   prompt_x: {prompt_x.shape}, min={prompt_x.min():.6f}, max={prompt_x.max():.6f}")
-                    print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
-                    print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
-                    print(f"   t: {t.unsqueeze(0).shape}, min={t.unsqueeze(0).min():.6f}, max={t.unsqueeze(0).max():.6f}")
+                # 调试输出已移除
                 
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t.unsqueeze(0), style, mu)
                 
                 # 逐层调试：记录estimator输出
                 if debug_layers:
-                    print(f">> [PyTorch CFM Debug] Estimator输出:")
-                    print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
+                                        print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
 
-            # 逐层调试输出
-            if debug_layers:
-                print(f">> [PyTorch CFM Debug] Step {step}:")
-                print(f"   x: min={x.min():.6f}, max={x.max():.6f}, mean={x.mean():.6f}")
-                print(f"   t: {t.item():.6f}")
-                print(f"   dt: {dt.item():.6f}")
-                print(f"   dphi_dt: min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}, mean={dphi_dt.mean():.6f}")
+            # 调试输出已移除
 
             x = x + dt * dphi_dt
             t = t + dt
