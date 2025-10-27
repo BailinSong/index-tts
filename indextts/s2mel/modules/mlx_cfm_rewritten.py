@@ -146,87 +146,109 @@ class MLXDiTRewritten(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        # Extract config
-        dit_cfg = config.DiT
-        style_cfg = config.style_encoder
+        # Handle both dict and object config
+        if isinstance(config, dict):
+            dit_cfg = config['DiT']
+            style_cfg = config['style_encoder']
+        else:
+            dit_cfg = config.DiT
+            style_cfg = config.style_encoder
         
-        self.in_channels = dit_cfg.in_channels  # 80 (mel bins)
-        self.out_channels = dit_cfg.in_channels
-        self.hidden_dim = dit_cfg.hidden_dim  # 512
-        self.num_heads = dit_cfg.num_heads  # 8
-        self.depth = dit_cfg.depth  # 13 layers
+        self.in_channels = dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels  # 80 (mel bins)
+        self.out_channels = dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels
+        self.hidden_dim = dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim  # 512
+        self.num_heads = dit_cfg['num_heads'] if isinstance(dit_cfg, dict) else dit_cfg.num_heads  # 8
+        self.depth = dit_cfg['depth'] if isinstance(dit_cfg, dict) else dit_cfg.depth  # 13 layers
         
-        self.time_as_token = dit_cfg.get('time_as_token', False)
-        self.style_as_token = dit_cfg.get('style_as_token', False)
+        # Get optional parameters
+        if isinstance(dit_cfg, dict):
+            self.time_as_token = dit_cfg.get('time_as_token', False)
+            self.style_as_token = dit_cfg.get('style_as_token', False)
+        else:
+            self.time_as_token = dit_cfg.get('time_as_token', False)
+            self.style_as_token = dit_cfg.get('style_as_token', False)
         
         # 确保推理模式 - 与PyTorch版本一致
         # MLX的training属性是只读的，我们通过其他方式确保推理模式
         self._inference_mode = True
-        self.long_skip_connection = dit_cfg.long_skip_connection
-        self.transformer_style_condition = dit_cfg.style_condition
-        self.is_causal = dit_cfg.is_causal
-        self.final_layer_type = dit_cfg.final_layer_type
+        self.long_skip_connection = dit_cfg['long_skip_connection'] if isinstance(dit_cfg, dict) else dit_cfg.long_skip_connection
+        self.transformer_style_condition = dit_cfg['style_condition'] if isinstance(dit_cfg, dict) else dit_cfg.style_condition
+        self.is_causal = dit_cfg['is_causal'] if isinstance(dit_cfg, dict) else dit_cfg.is_causal
+        self.final_layer_type = dit_cfg['final_layer_type'] if isinstance(dit_cfg, dict) else dit_cfg.final_layer_type
         
         # Embedders - 与PyTorch版本完全一致
-        self.x_embedder = nn.Linear(dit_cfg.in_channels, dit_cfg.hidden_dim, bias=True)
+        self.x_embedder = nn.Linear(dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels, 
+                                   dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
         
         # Content embedding - 与PyTorch版本完全一致
-        self.content_type = dit_cfg.content_type
-        self.cond_embedder = nn.Embedding(dit_cfg.content_codebook_size, dit_cfg.hidden_dim)
-        self.cond_projection = nn.Linear(dit_cfg.content_dim, dit_cfg.hidden_dim, bias=True)
+        self.content_type = dit_cfg['content_type'] if isinstance(dit_cfg, dict) else dit_cfg.content_type
+        self.cond_embedder = nn.Embedding(dit_cfg['content_codebook_size'] if isinstance(dit_cfg, dict) else dit_cfg.content_codebook_size, 
+                                        dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
+        self.cond_projection = nn.Linear(dit_cfg['content_dim'] if isinstance(dit_cfg, dict) else dit_cfg.content_dim, 
+                                       dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
         
         # Timestep embedder
-        self.t_embedder = MLXTimestepEmbedderRewritten(dit_cfg.hidden_dim)
+        self.t_embedder = MLXTimestepEmbedderRewritten(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
         
         # GPT-fast style Transformer
         self.transformer = create_mlx_transformer_from_config(config)
         
         # Merge layer - 与PyTorch版本完全一致
         merge_input_dim = (
-            dit_cfg.in_channels * 2 +  # for x and prompt_x
-            dit_cfg.hidden_dim +  # for cond (already projected)
-            style_cfg.dim * self.transformer_style_condition * (not self.style_as_token)  # for style
+            (dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels) * 2 +  # for x and prompt_x
+            (dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim) +  # for cond (already projected)
+            (style_cfg['dim'] if isinstance(style_cfg, dict) else style_cfg.dim) * self.transformer_style_condition * (not self.style_as_token)  # for style
         )
-        self.cond_x_merge_linear = nn.Linear(merge_input_dim, dit_cfg.hidden_dim, bias=True)
+        self.cond_x_merge_linear = nn.Linear(merge_input_dim, dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
         
         # Style as token mode
         if self.style_as_token:
-            self.style_in = nn.Linear(style_cfg.dim, dit_cfg.hidden_dim, bias=True)
+            self.style_in = nn.Linear(style_cfg['dim'] if isinstance(style_cfg, dict) else style_cfg.dim, 
+                                    dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
         
         # Long skip connection
         if self.long_skip_connection:
-            self.skip_linear = nn.Linear(dit_cfg.hidden_dim + dit_cfg.in_channels, dit_cfg.hidden_dim, bias=True)
+            self.skip_linear = nn.Linear((dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim) + 
+                                        (dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels), 
+                                        dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
         
         # Final layer - 与PyTorch版本完全一致
         if self.final_layer_type == 'wavenet':
             # WaveNet configuration
-            wavenet_cfg = config.wavenet
-            self.t_embedder2 = MLXTimestepEmbedderRewritten(wavenet_cfg.hidden_dim)
-            self.conv1 = nn.Linear(dit_cfg.hidden_dim, wavenet_cfg.hidden_dim, bias=True)
-            self.conv2 = nn.Conv1d(wavenet_cfg.hidden_dim, dit_cfg.in_channels, kernel_size=1, padding=0, bias=True)
+            wavenet_cfg = config['wavenet'] if isinstance(config, dict) else config.wavenet
+            self.t_embedder2 = MLXTimestepEmbedderRewritten(wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim)
+            self.conv1 = nn.Linear(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, 
+                                 wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, bias=True)
+            self.conv2 = nn.Conv1d(wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, 
+                                 dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels, kernel_size=1, padding=0, bias=True)
             
             self.wavenet = MLXWaveNet(
-                hidden_channels=wavenet_cfg.hidden_dim,
-                kernel_size=wavenet_cfg.kernel_size,
-                dilation_rate=wavenet_cfg.dilation_rate,
-                n_layers=wavenet_cfg.num_layers,
-                gin_channels=wavenet_cfg.hidden_dim,
-                p_dropout=wavenet_cfg.p_dropout
+                hidden_channels=wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim,
+                kernel_size=wavenet_cfg['kernel_size'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.kernel_size,
+                dilation_rate=wavenet_cfg['dilation_rate'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.dilation_rate,
+                n_layers=wavenet_cfg['num_layers'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.num_layers,
+                gin_channels=wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim,
+                p_dropout=wavenet_cfg['p_dropout'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.p_dropout
             )
             
             self.final_layer = MLXFinalLayerRewritten(
-                wavenet_cfg.hidden_dim, 1, wavenet_cfg.hidden_dim
+                wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, 
+                1, 
+                wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim
             )
-            self.res_projection = nn.Linear(dit_cfg.hidden_dim, wavenet_cfg.hidden_dim, bias=True)
-            self.wavenet_style_condition = wavenet_cfg.style_condition
+            self.res_projection = nn.Linear(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, 
+                                           wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, bias=True)
+            self.wavenet_style_condition = wavenet_cfg['style_condition'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.style_condition
         else:
             # MLP final layer - 与PyTorch版本完全一致
-            self.final_mlp_0 = nn.Linear(dit_cfg.hidden_dim, dit_cfg.hidden_dim, bias=True)
-            self.final_mlp_2 = nn.Linear(dit_cfg.hidden_dim, dit_cfg.in_channels, bias=True)
+            self.final_mlp_0 = nn.Linear(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, 
+                                       dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
+            self.final_mlp_2 = nn.Linear(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, 
+                                       dit_cfg['in_channels'] if isinstance(dit_cfg, dict) else dit_cfg.in_channels, bias=True)
         
         # Content masking for CFG
-        self.class_dropout_prob = dit_cfg.class_dropout_prob
-        self.content_mask_embedder = nn.Embedding(1, dit_cfg.hidden_dim)
+        self.class_dropout_prob = dit_cfg['class_dropout_prob'] if isinstance(dit_cfg, dict) else dit_cfg.class_dropout_prob
+        self.content_mask_embedder = nn.Embedding(1, dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
         
         # Input positions buffer
         self.input_pos = mx.arange(16384, dtype=mx.int32)

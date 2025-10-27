@@ -441,14 +441,24 @@ class MLXCFM(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.sigma_min = 1e-6
-        self.in_channels = config.DiT.in_channels
+        
+        # Handle both dict and object config
+        if isinstance(config, dict):
+            self.in_channels = config['DiT']['in_channels']
+            dit_config = config['DiT']
+        else:
+            self.in_channels = config.DiT.in_channels
+            dit_config = config.DiT
         
         # DiT estimator - 使用重写的版本
         from indextts.s2mel.modules.mlx_cfm_rewritten import MLXDiTRewritten
         self.estimator = MLXDiTRewritten(config)
         
         # Check if zero_prompt_speech_token is set
-        self.zero_prompt_speech_token = config.DiT.get('zero_prompt_speech_token', False)
+        if isinstance(config, dict):
+            self.zero_prompt_speech_token = dit_config.get('zero_prompt_speech_token', False)
+        else:
+            self.zero_prompt_speech_token = dit_config.get('zero_prompt_speech_token', False)
         
         print(">> MLX CFM initialized with DiT estimator")
     
@@ -643,7 +653,10 @@ class MLXCFM(nn.Module):
         from indextts.s2mel.modules.mlx_dit_weights import load_dit_weights
         
         # Load DiT/estimator weights
-        estimator_prefix = f"{prefix}estimator."
+        if prefix:
+            estimator_prefix = f"{prefix}estimator."
+        else:
+            estimator_prefix = ""
         loaded = load_dit_weights(self.estimator, pytorch_state_dict, estimator_prefix)
         
         print(f">> MLX CFM loaded {loaded} weights total")
@@ -793,6 +806,30 @@ class MLXCFM(nn.Module):
         Returns:
             Number of weights loaded
         """
+        # 使用 PyTorch 风格的权重加载，避免 MLX update 方法的参数名问题
+        try:
+            # 将缓存数据转换为 PyTorch 风格的 state_dict
+            pytorch_state_dict = {}
+            for key, value in cache_dict.items():
+                if key.startswith("models.cfm.estimator."):
+                    # 移除前缀，得到 PyTorch 风格的键名
+                    pytorch_key = key[len("models.cfm.estimator."):]
+                    pytorch_state_dict[pytorch_key] = value
+            
+            # 使用现有的 PyTorch 风格加载方法，但不需要前缀
+            loaded = self.load_weights_from_pytorch(pytorch_state_dict, prefix="")
+            print(f">> Loaded {loaded} weights from cache (PyTorch style)")
+            return loaded
+            
+        except Exception as e:
+            print(f">> ✗ PyTorch-style loading failed: {e}")
+            print(">> Falling back to original method...")
+            
+            # 回退到原始方法
+            return self._load_from_cache_original(cache_dict)
+    
+    def _load_from_cache_original(self, cache_dict):
+        """原始的缓存加载方法"""
         # Reconstruct nested parameter dict
         def unflatten_parameters(flat_dict, prefix="models.cfm.estimator"):
             """Reconstruct nested dict from flattened parameters"""
@@ -820,11 +857,28 @@ class MLXCFM(nn.Module):
         nested_params = unflatten_parameters(cache_dict, "models.cfm.estimator")
         
         # Use MLX's update method to load weights
-        self.estimator.update(nested_params)
+        try:
+            self.estimator.update(nested_params)
+            loaded = len(cache_dict)
+            print(f">> Loaded {loaded} weights from cache")
+            return loaded
+        except Exception as e:
+            print(f">> ✗ MLX update failed: {e}")
+            raise e
+    
+    def _fix_nested_parameter_names(self, nested_params):
+        """
+        Fix problematic parameter names in nested parameter dict.
         
-        loaded = len(cache_dict)
-        print(f">> Loaded {loaded} weights from cache")
-        return loaded
+        Args:
+            nested_params: Nested parameter dictionary
+            
+        Returns:
+            Fixed nested parameter dictionary
+        """
+        # 实际上，MLX 模型期望的是原始的数字键名
+        # 不需要修复，直接返回原始参数
+        return nested_params
 
 
 def create_mlx_cfm_from_pytorch(pytorch_cfm, config):

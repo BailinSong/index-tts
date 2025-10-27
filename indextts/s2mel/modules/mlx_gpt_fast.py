@@ -471,26 +471,30 @@ def create_mlx_transformer_from_config(config):
     """
     Create MLX Transformer from DiT config.
     """
-    dit_cfg = config.DiT
+    # Handle both dict and object config
+    if isinstance(config, dict):
+        dit_cfg = config['DiT']
+    else:
+        dit_cfg = config.DiT
     
     # Calculate intermediate size (SwiGLU uses 2/3 * 4 * dim)
-    hidden_dim = 4 * dit_cfg.hidden_dim
+    hidden_dim = 4 * (dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
     n_hidden = int(2 * hidden_dim / 3)
     # Round to multiple of 256 for efficiency
     intermediate_size = ((n_hidden + 255) // 256) * 256
     
     return MLXTransformerGPTFast(
-        dim=dit_cfg.hidden_dim,
-        n_layer=dit_cfg.depth,
-        n_head=dit_cfg.num_heads,
-        head_dim=dit_cfg.hidden_dim // dit_cfg.num_heads,
+        dim=dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim,
+        n_layer=dit_cfg['depth'] if isinstance(dit_cfg, dict) else dit_cfg.depth,
+        n_head=dit_cfg['num_heads'] if isinstance(dit_cfg, dict) else dit_cfg.num_heads,
+        head_dim=(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim) // (dit_cfg['num_heads'] if isinstance(dit_cfg, dict) else dit_cfg.num_heads),
         intermediate_size=intermediate_size,
-        n_local_heads=dit_cfg.num_heads,  # Same as n_head for DiT
+        n_local_heads=dit_cfg['num_heads'] if isinstance(dit_cfg, dict) else dit_cfg.num_heads,  # Same as n_head for DiT
         block_size=16384,
         rope_base=10000,
         norm_eps=1e-5,
         has_cross_attention=False,
-        uvit_skip_connection=dit_cfg.get('uvit_skip_connection', False),
-        time_as_token=dit_cfg.get('time_as_token', False)
+        uvit_skip_connection=dit_cfg.get('uvit_skip_connection', False) if isinstance(dit_cfg, dict) else dit_cfg.get('uvit_skip_connection', False),
+        time_as_token=dit_cfg.get('time_as_token', False) if isinstance(dit_cfg, dict) else dit_cfg.get('time_as_token', False)
     )
 

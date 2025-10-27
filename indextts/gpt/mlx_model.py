@@ -438,9 +438,19 @@ class UnifiedVoiceMLX(nn.Module):
         }
         
         for key, (module_name, attr_name) in simple_mappings.items():
+            # Try original key first, then fixed key
+            fixed_key = self._fix_key_name(key)
+            weight = None
+            
             if key in mlx_weights:
+                weight = mlx_weights[key]
+            elif fixed_key != key and fixed_key in mlx_weights:
+                weight = mlx_weights[fixed_key]
+                print(f"   🔧 Used fixed key: '{key}' -> '{fixed_key}'")
+            
+            if weight is not None:
                 module = getattr(self, module_name)
-                setattr(module, attr_name, mlx_weights[key])
+                setattr(module, attr_name, weight)
                 loaded += 1
         
         # Load transformer layers
@@ -453,11 +463,21 @@ class UnifiedVoiceMLX(nn.Module):
             c_attn_weight = f"{prefix}.attn.c_attn.weight"
             c_attn_bias = f"{prefix}.attn.c_attn.bias"
             
+            # Try original key first, then fixed key
+            fixed_c_attn_weight = self._fix_key_name(c_attn_weight)
+            weight = None
+            
             if c_attn_weight in mlx_weights:
+                weight = mlx_weights[c_attn_weight]
+            elif fixed_c_attn_weight != c_attn_weight and fixed_c_attn_weight in mlx_weights:
+                weight = mlx_weights[fixed_c_attn_weight]
+                print(f"   🔧 Used fixed key: '{c_attn_weight}' -> '{fixed_c_attn_weight}'")
+            
+            if weight is not None:
                 # Split combined qkv weight into separate q, k, v
                 # PyTorch GPT2 c_attn.weight shape: (in_features, out_features) = (D, 3*D)
                 # This is already in the correct format from checkpoint
-                combined = mlx_weights[c_attn_weight]  # (D, 3*D)
+                combined = weight  # (D, 3*D)
                 
                 # Verify shape
                 expected_shape = (self.model_dim, 3 * self.model_dim)
@@ -482,9 +502,19 @@ class UnifiedVoiceMLX(nn.Module):
                 
                 loaded += 1
             
+            # Try original key first, then fixed key for bias
+            fixed_c_attn_bias = self._fix_key_name(c_attn_bias)
+            bias = None
+            
             if c_attn_bias in mlx_weights:
+                bias = mlx_weights[c_attn_bias]
+            elif fixed_c_attn_bias != c_attn_bias and fixed_c_attn_bias in mlx_weights:
+                bias = mlx_weights[fixed_c_attn_bias]
+                print(f"   🔧 Used fixed key: '{c_attn_bias}' -> '{fixed_c_attn_bias}'")
+            
+            if bias is not None:
                 # PyTorch GPT2 c_attn.bias shape: (3*model_dim,)
-                combined = mlx_weights[c_attn_bias]
+                combined = bias
                 
                 # Manual split by slicing
                 split_size = self.model_dim
@@ -2319,6 +2349,39 @@ class UnifiedVoiceMLX(nn.Module):
                 return codes, speech_conditioning_latent_torch, conds_mlx
             else:
                 return codes, speech_conditioning_latent_torch
+
+    def _fix_key_name(self, key):
+        """
+        Fix problematic key names that cause MLX parameter loading issues.
+        
+        Args:
+            key: Original key name
+            
+        Returns:
+            Fixed key name that is a valid Python identifier
+        """
+        # 实际上，大多数键名都是正确的，不需要修复
+        # 只有在真正有问题时才进行修复
+        
+        # 检查是否有特殊字符问题
+        if any(c in key for c in ['[', ']', '(', ')', ' ', '\t']):
+            # 只修复特殊字符，不修复数字开头的键
+            parts = key.split('.')
+            fixed_parts = []
+            for part in parts:
+                # 移除特殊字符
+                clean_part = part.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+                clean_part = clean_part.replace(' ', '_').replace('\t', '_')
+                
+                # 确保不是空字符串
+                if clean_part:
+                    fixed_parts.append(clean_part)
+            
+            return '.'.join(fixed_parts)
+        
+        # 对于数字开头的键，MLX 模型通常能够处理
+        # 只有在真正出错时才进行修复
+        return key
 
 
 def create_mlx_gpt_from_cache(mlx_cache_dict, config):

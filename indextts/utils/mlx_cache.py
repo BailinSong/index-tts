@@ -109,15 +109,20 @@ class MLXModelCache:
             print(">> Converting tensors to MLX arrays...")
             mlx_state_dict = {}
             for key, value in state_dict.items():
+                # Fix problematic key names before conversion
+                fixed_key = self._fix_key_name(key)
+                if fixed_key != key:
+                    print(f"   🔧 Fixed key: '{key}' -> '{fixed_key}'")
+                
                 if isinstance(value, torch.Tensor):
                     numpy_array = value.cpu().numpy().astype('float32')  # 确保使用float32
-                    mlx_state_dict[key] = mx.array(numpy_array)
+                    mlx_state_dict[fixed_key] = mx.array(numpy_array)
                     
                     # 特别检查t_embedder和cond_embedder权重
-                    if "t_embedder.mlp" in key or "cond_embedder.weight" in key:
-                        print(f"   🔍 Converting {key}: {numpy_array.shape}, range: [{numpy_array.min():.6f}, {numpy_array.max():.6f}]")
+                    if "t_embedder.mlp" in fixed_key or "cond_embedder.weight" in fixed_key:
+                        print(f"   🔍 Converting {fixed_key}: {numpy_array.shape}, range: [{numpy_array.min():.6f}, {numpy_array.max():.6f}]")
                 else:
-                    mlx_state_dict[key] = value
+                    mlx_state_dict[fixed_key] = value
 
             # Save to cache
             cache_path = self.get_cache_path(model_name)
@@ -228,6 +233,39 @@ class MLXModelCache:
             print(f"   ✅ CFM weights count looks correct: {len(cfm_weights)}")
 
         return cfm_weights
+
+    def _fix_key_name(self, key):
+        """
+        Fix problematic key names that cause MLX parameter loading issues.
+        
+        Args:
+            key: Original key name
+            
+        Returns:
+            Fixed key name that is a valid Python identifier
+        """
+        # 实际上，大多数键名都是正确的，不需要修复
+        # 只有在真正有问题时才进行修复
+        
+        # 检查是否有特殊字符问题
+        if any(c in key for c in ['[', ']', '(', ')', ' ', '\t']):
+            # 只修复特殊字符，不修复数字开头的键
+            parts = key.split('.')
+            fixed_parts = []
+            for part in parts:
+                # 移除特殊字符
+                clean_part = part.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+                clean_part = clean_part.replace(' ', '_').replace('\t', '_')
+                
+                # 确保不是空字符串
+                if clean_part:
+                    fixed_parts.append(clean_part)
+            
+            return '.'.join(fixed_parts)
+        
+        # 对于数字开头的键，MLX 模型通常能够处理
+        # 只有在真正出错时才进行修复
+        return key
 
     def get_or_convert(self, model_name, pytorch_checkpoint_path, force_cfm_fix=False):
         """

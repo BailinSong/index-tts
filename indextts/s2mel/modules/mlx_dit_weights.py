@@ -27,26 +27,30 @@ def load_weight_norm(state_dict, prefix):
         v = state_dict[v_key]
         
         # Compute weight: w = g * v / ||v||
+        # Convert to numpy for computation
+        g_np = np.array(g)
+        v_np = np.array(v)
+        
         # For Conv1d: v is (O, I, K), norm over (I, K) i.e. dims (1, 2)
         # For Linear: v is (O, I), norm over (I) i.e. dim (1,)
         # Generally: norm over all dims except first (output dim)
-        if len(v.shape) == 3:
+        if len(v_np.shape) == 3:
             # Conv1d: (O, I, K) - norm over (1, 2)
-            norm_v = np.sqrt(np.sum(v**2, axis=(1, 2), keepdims=True))
-        elif len(v.shape) == 2:
+            norm_v = np.sqrt(np.sum(v_np**2, axis=(1, 2), keepdims=True))
+        elif len(v_np.shape) == 2:
             # Linear: (O, I) - norm over (1,)
-            norm_v = np.sqrt(np.sum(v**2, axis=1, keepdims=True))
+            norm_v = np.sqrt(np.sum(v_np**2, axis=1, keepdims=True))
         else:
             # General case
-            axes = tuple(range(1, len(v.shape)))
-            norm_v = np.sqrt(np.sum(v**2, axis=axes, keepdims=True))
+            axes = tuple(range(1, len(v_np.shape)))
+            norm_v = np.sqrt(np.sum(v_np**2, axis=axes, keepdims=True))
         
-        w = g * v / (norm_v + 1e-8)
+        w_np = g_np * v_np / (norm_v + 1e-8)
         
-        return w
+        return w_np
     elif f"{prefix}.weight" in state_dict:
         # Already removed weight_norm
-        return state_dict[f"{prefix}.weight"]
+        return np.array(state_dict[f"{prefix}.weight"])
     else:
         return None
 
