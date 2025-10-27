@@ -124,6 +124,10 @@ class BASECFM(torch.nn.Module, ABC):
                     except ImportError:
                         pass
 
+                # 设置调试标志
+                if debug_layers:
+                    self.estimator._debug_layers = True
+
                 # Perform a single forward pass for both original and CFG inputs
                 stacked_dphi_dt = self.estimator(
                     stacked_x, stacked_prompt_x, x_lens, stacked_t, stacked_style, stacked_mu,
@@ -164,6 +168,10 @@ class BASECFM(torch.nn.Module, ABC):
                                     additional_info={'cfg_enabled': False})
                     except ImportError:
                         pass
+                
+                # 设置调试标志
+                if debug_layers:
+                    self.estimator._debug_layers = True
                 
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t.unsqueeze(0), style, mu)
                 

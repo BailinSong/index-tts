@@ -58,29 +58,30 @@ class CFMDebugger:
             
         # 如果两个数据都有，进行对比
         if pytorch_data is not None and mlx_data is not None:
-            self.debug_data['comparisons'][key] = self._compare_tensors(
+            comparison_result = self._compare_tensors(
                 pytorch_data, mlx_data, stage_name
             )
-            
-        # 添加额外信息
-        if additional_info:
-            if key not in self.debug_data['comparisons']:
-                self.debug_data['comparisons'][key] = {}
-            self.debug_data['comparisons'][key]['additional_info'] = additional_info
+            # 添加额外信息到对比结果中
+            if additional_info:
+                comparison_result['additional_info'] = additional_info
+            self.debug_data['comparisons'][key] = comparison_result
+        elif additional_info:
+            # 如果只有额外信息，创建对比条目
+            self.debug_data['comparisons'][key] = {'additional_info': additional_info}
     
     def _extract_tensor_info(self, data: Any) -> Dict[str, Any]:
         """提取张量信息"""
         if isinstance(data, (torch.Tensor, mx.array)):
             # 处理整数类型张量
-            if isinstance(data, torch.Tensor) and data.dtype in [torch.int64, torch.int32, torch.long]:
+            if isinstance(data, torch.Tensor) and data.dtype in [torch.int64, torch.int32, torch.long, torch.int]:
                 # 对于整数张量，只提取基本信息
                 return {
                     'shape': list(data.shape),
                     'dtype': str(data.dtype),
                     'min': int(data.min()),
                     'max': int(data.max()),
-                    'mean': 'N/A (integer tensor)',
-                    'std': 'N/A (integer tensor)',
+                    'mean': float(data.float().mean()) if data.numel() > 0 else 0.0,
+                    'std': float(data.float().std()) if data.numel() > 1 else 0.0,
                     'data_sample': self._get_sample_data(data)
                 }
             else:
@@ -135,11 +136,17 @@ class CFMDebugger:
         for key in pytorch_data.keys():
             if key in mlx_data:
                 try:
-                    pytorch_tensor = pytorch_data[key]
-                    mlx_tensor = mlx_data[key]
+                    pytorch_info = pytorch_data[key]
+                    mlx_info = mlx_data[key]
                     
-                    comp_result = self._compare_single_tensor(pytorch_tensor, mlx_tensor, key)
-                    comparison['tensor_comparisons'][key] = comp_result
+                    # 如果已经是提取的信息字典，直接对比
+                    if isinstance(pytorch_info, dict) and isinstance(mlx_info, dict):
+                        comp_result = self._compare_tensor_info(pytorch_info, mlx_info, key)
+                        comparison['tensor_comparisons'][key] = comp_result
+                    else:
+                        # 如果是原始张量，使用原来的方法
+                        comp_result = self._compare_single_tensor(pytorch_info, mlx_info, key)
+                        comparison['tensor_comparisons'][key] = comp_result
                     
                 except Exception as e:
                     comparison['tensor_comparisons'][key] = {
@@ -148,6 +155,63 @@ class CFMDebugger:
                     }
         
         return comparison
+    
+    def _compare_tensor_info(self, pytorch_info: Dict[str, Any], mlx_info: Dict[str, Any], tensor_name: str) -> Dict[str, Any]:
+        """对比两个张量信息字典"""
+        try:
+            # 形状对比
+            pytorch_shape = pytorch_info.get('shape', [])
+            mlx_shape = mlx_info.get('shape', [])
+            shape_match = pytorch_shape == mlx_shape
+            
+            # 数值对比
+            pytorch_min = pytorch_info.get('min', 0)
+            pytorch_max = pytorch_info.get('max', 0)
+            pytorch_mean = pytorch_info.get('mean', 0)
+            pytorch_std = pytorch_info.get('std', 0)
+            
+            mlx_min = mlx_info.get('min', 0)
+            mlx_max = mlx_info.get('max', 0)
+            mlx_mean = mlx_info.get('mean', 0)
+            mlx_std = mlx_info.get('std', 0)
+            
+            # 计算差异
+            min_diff = abs(pytorch_min - mlx_min)
+            max_diff = abs(pytorch_max - mlx_max)
+            mean_diff = abs(pytorch_mean - mlx_mean)
+            std_diff = abs(pytorch_std - mlx_std)
+            
+            # 相对差异
+            rel_diff = max_diff / (abs(pytorch_max) + 1e-8)
+            
+            return {
+                'tensor_name': tensor_name,
+                'shape_match': shape_match,
+                'pytorch_shape': pytorch_shape,
+                'mlx_shape': mlx_shape,
+                'max_diff': max_diff,
+                'mean_diff': mean_diff,
+                'relative_diff': rel_diff,
+                'is_close': max_diff < 1e-5,
+                'pytorch_stats': {
+                    'min': pytorch_min,
+                    'max': pytorch_max,
+                    'mean': pytorch_mean,
+                    'std': pytorch_std
+                },
+                'mlx_stats': {
+                    'min': mlx_min,
+                    'max': mlx_max,
+                    'mean': mlx_mean,
+                    'std': mlx_std
+                }
+            }
+        except Exception as e:
+            return {
+                'tensor_name': tensor_name,
+                'error': str(e),
+                'comparison_failed': True
+            }
     
     def _compare_single_tensor(self, pytorch_tensor: Any, mlx_tensor: Any, tensor_name: str) -> Dict[str, Any]:
         """对比单个张量"""

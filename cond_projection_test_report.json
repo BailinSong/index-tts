@@ -1,0 +1,38 @@
+{
+  "timestamp": "2025-10-27T15:14:52",
+  "test_results": {
+    "weight_file_existence": {
+      "status": "passed",
+      "message": "\u6743\u91cd\u6587\u4ef6\u5b58\u5728"
+    },
+    "weight_values_consistency": {
+      "status": "passed",
+      "message": "\u6743\u91cd\u503c\u4e00\u81f4"
+    },
+    "mlx_model_creation": {
+      "status": "passed",
+      "message": "MLX \u6a21\u578b\u521b\u5efa\u6210\u529f"
+    },
+    "weight_loading": {
+      "status": "passed",
+      "message": "\u6743\u91cd\u52a0\u8f7d\u6210\u529f"
+    },
+    "forward_pass_consistency": {
+      "status": "passed",
+      "message": "\u524d\u5411\u4f20\u64ad\u4e00\u81f4"
+    },
+    "initialization_consistency": {
+      "status": "passed",
+      "message": "\u521d\u59cb\u5316\u4e00\u81f4"
+    },
+    "performance_test": {
+      "status": "passed",
+      "message": "\u6027\u80fd\u6d4b\u8bd5: 0.00 ms"
+    }
+  },
+  "summary": {
+    "total_tests": 7,
+    "passed": 7,
+    "failed": 0
+  }
+}

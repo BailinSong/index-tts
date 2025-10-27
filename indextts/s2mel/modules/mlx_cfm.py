@@ -784,6 +784,14 @@ class MLXCFM(nn.Module):
 
             print(f"   Found {len(estimator_weights)} estimator weights")
 
+            # 🔧 修复：直接加载 cond_projection 权重
+            if 'cond_projection.weight' in estimator_weights and 'cond_projection.bias' in estimator_weights:
+                print("   🔧 Loading cond_projection weights directly...")
+                self.estimator.cond_projection.weight = estimator_weights['cond_projection.weight']
+                self.estimator.cond_projection.bias = estimator_weights['cond_projection.bias']
+                loaded += 2
+                print("   ✅ cond_projection weights loaded successfully")
+
             # Load weights using the standard parameter loading
             def load_weights_recursively(module, weights, prefix=""):
                 """Recursively load weights into module"""

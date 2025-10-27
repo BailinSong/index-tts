@@ -213,6 +213,8 @@ class DiT(torch.nn.Module):
                 shape: (batch_size, mel_timesteps(795+1069), 512)
         
         """
+        # 检查是否启用调试模式
+        debug_layers = getattr(self, '_debug_layers', False)
         class_dropout = False
         if self.training and torch.rand(1) < self.class_dropout_prob:
             class_dropout = True
@@ -223,14 +225,43 @@ class DiT(torch.nn.Module):
 
         B, _, T = x.size()
 
+        # 调试：记录 timestep embedding
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
+                log_cfm_stage("timestep_embedding", pytorch_data={'t_emb': t1}, layer=0)
+            except ImportError:
+                t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
+        else:
+            t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
 
-        t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
-        cond = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
+        # 调试：记录 conditioning projection
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
+                log_cfm_stage("cond_projection", pytorch_data={'cond_proj': cond_proj}, layer=0)
+            except ImportError:
+                cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
+        else:
+            cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
 
-        x = x.transpose(1, 2) # [2,1863,80]
-        prompt_x = prompt_x.transpose(1, 2) # [2,1863,80]
+        # 调试：记录 x embedding
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                x_t = x.transpose(1, 2) # [2,1863,80]
+                prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
+                log_cfm_stage("x_embedding", pytorch_data={'x_t': x_t, 'prompt_x_t': prompt_x_t}, layer=0)
+            except ImportError:
+                x_t = x.transpose(1, 2) # [2,1863,80]
+                prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
+        else:
+            x_t = x.transpose(1, 2) # [2,1863,80]
+            prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
 
-        x_in = torch.cat([x, prompt_x, cond], dim=-1) # 80+80+512=672 [2, 1863, 672]
+        x_in = torch.cat([x_t, prompt_x_t, cond_proj], dim=-1) # 80+80+512=672 [2, 1863, 672]
         
         if self.transformer_style_condition and not self.style_as_token: # True and True
             x_in = torch.cat([x_in, style[:, None, :].repeat(1, T, 1)], dim=-1) #[2, 1863, 864]
@@ -255,8 +286,16 @@ class DiT(torch.nn.Module):
         x_res = x_res[:, 1:] if self.time_as_token else x_res
         x_res = x_res[:, 1:] if self.style_as_token else x_res
         
+        # 调试：记录 transformer 输出
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("transformer_output", pytorch_data={'x_res': x_res}, layer=0)
+            except ImportError:
+                pass
+        
         if self.long_skip_connection: #True
-            x_res = self.skip_linear(torch.cat([x_res, x], dim=-1))
+            x_res = self.skip_linear(torch.cat([x_res, x_t], dim=-1))
         if self.final_layer_type == 'wavenet':
             x = self.conv1(x_res)
             x = x.transpose(1, 2)
@@ -268,5 +307,14 @@ class DiT(torch.nn.Module):
         else:
             x = self.final_mlp(x_res)
             x = x.transpose(1, 2)
+        
+        # 调试：记录 final layer 输出
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("final_layer_output", pytorch_data={'x_out': x}, layer=0)
+            except ImportError:
+                pass
+        
         # x [2,80,1863]
         return x

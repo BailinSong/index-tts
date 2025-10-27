@@ -1,197 +1,210 @@
 #!/usr/bin/env python3
 """
-修复MLX权重加载问题
-1. 修复t_embedder权重访问
-2. 修复cond_embedder权重转换
-3. 重新生成MLX缓存
+修复 MLX 模型权重加载问题
+确保 MLX 模型正确加载预训练的 cond_projection 权重
 """
 
-import torch
-import mlx.core as mx
-import numpy as np
 import sys
 import os
+sys.path.append('.')
+
+import torch
+import numpy as np
+import mlx.core as mx
+import mlx.nn as nn
+import yaml
 from pathlib import Path
 
-# 添加项目路径
-sys.path.append(str(Path(__file__).parent))
+def load_pytorch_weights():
+    """加载 PyTorch 权重"""
+    print("📥 加载 PyTorch 权重...")
+    
+    pytorch_weights = torch.load('checkpoints/s2mel.pth', map_location='cpu')
+    
+    # 提取 cond_projection 权重
+    cond_proj_weight = pytorch_weights['net']['cfm']['estimator.cond_projection.weight'].numpy()
+    cond_proj_bias = pytorch_weights['net']['cfm']['estimator.cond_projection.bias'].numpy()
+    
+    print(f"✅ PyTorch 权重加载完成:")
+    print(f"   weight: {cond_proj_weight.shape}, range: [{cond_proj_weight.min():.6f}, {cond_proj_weight.max():.6f}]")
+    print(f"   bias: {cond_proj_bias.shape}, range: [{cond_proj_bias.min():.6f}, {cond_proj_bias.max():.6f}]")
+    
+    return cond_proj_weight, cond_proj_bias
 
-from indextts.infer_v2 import IndexTTS2
-from indextts.utils.mlx_utils import mlx_to_torch, torch_to_mlx
-from indextts.utils.mlx_cache import MLXModelCache
+def load_mlx_weights():
+    """加载 MLX 权重"""
+    print("📥 加载 MLX 权重...")
+    
+    mlx_weights = np.load('checkpoints/mlx/s2mel.npz')
+    
+    # 提取 cond_projection 权重
+    cond_proj_weight = mlx_weights['models.cfm.estimator.cond_projection.weight']
+    cond_proj_bias = mlx_weights['models.cfm.estimator.cond_projection.bias']
+    
+    print(f"✅ MLX 权重加载完成:")
+    print(f"   weight: {cond_proj_weight.shape}, range: [{cond_proj_weight.min():.6f}, {cond_proj_weight.max():.6f}]")
+    print(f"   bias: {cond_proj_bias.shape}, range: [{cond_proj_bias.min():.6f}, {cond_proj_bias.max():.6f}]")
+    
+    return cond_proj_weight, cond_proj_bias
 
-def fix_mlx_weight_loading():
-    """修复MLX权重加载问题"""
+def create_mlx_model():
+    """创建 MLX 模型"""
+    print("🏗️ 创建 MLX 模型...")
     
-    print("=== 修复MLX权重加载问题 ===")
-    
-    # 初始化TTS系统
-    print("\n1. 初始化TTS系统...")
-    tts = IndexTTS2()
-    
-    # 获取PyTorch CFM estimator
-    pytorch_cfm = tts.s2mel.models.cfm
-    pytorch_estimator = pytorch_cfm.estimator
-    
-    print("\n2. 分析PyTorch权重结构...")
-    
-    # 分析PyTorch t_embedder权重
-    pytorch_t_embedder = pytorch_estimator.t_embedder
-    pytorch_t_weight = pytorch_t_embedder.mlp[0].weight  # 第一个线性层
-    print(f"PyTorch t_embedder权重: {pytorch_t_weight.shape}, 范围: [{pytorch_t_weight.min():.6f}, {pytorch_t_weight.max():.6f}]")
-    
-    # 分析PyTorch cond_embedder权重
-    pytorch_cond_embedder = pytorch_estimator.cond_embedder
-    pytorch_cond_weight = pytorch_cond_embedder.weight
-    print(f"PyTorch cond_embedder权重: {pytorch_cond_weight.shape}, 范围: [{pytorch_cond_weight.min():.6f}, {pytorch_cond_weight.max():.6f}]")
-    
-    print("\n3. 分析MLX权重结构...")
-    
-    # 手动创建MLX CFM
-    from indextts.s2mel.modules.mlx_cfm import MLXCFM
-    mlx_cfm = MLXCFM(tts.cfg.s2mel)
-    mlx_estimator = mlx_cfm.estimator
-    
-    # 分析MLX t_embedder权重
-    mlx_t_embedder = mlx_estimator.t_embedder
-    print(f"MLX t_embedder类型: {type(mlx_t_embedder)}")
-    print(f"MLX t_embedder属性: {[attr for attr in dir(mlx_t_embedder) if not attr.startswith('_')]}")
-    
-    # 尝试访问MLX t_embedder权重
-    if hasattr(mlx_t_embedder, 'mlp'):
-        mlp = mlx_t_embedder.mlp
-        print(f"MLX t_embedder.mlp类型: {type(mlp)}")
-        print(f"MLX t_embedder.mlp属性: {[attr for attr in dir(mlp) if not attr.startswith('_')]}")
+    try:
+        from indextts.s2mel.modules.mlx_cfm import MLXCFM
         
-        # 尝试访问mlp中的权重
-        if hasattr(mlp, '0'):
-            layer0 = mlp[0]
-            print(f"MLX t_embedder.mlp[0]类型: {type(layer0)}")
-            print(f"MLX t_embedder.mlp[0]属性: {[attr for attr in dir(layer0) if not attr.startswith('_')]}")
-            
-            if hasattr(layer0, 'weight'):
-                mlx_t_weight = layer0.weight
-                print(f"✅ 找到MLX t_embedder权重: {mlx_t_weight.shape}, 范围: [{mlx_t_weight.min():.6f}, {mlx_t_weight.max():.6f}]")
-            else:
-                print("❌ MLX t_embedder.mlp[0]没有weight属性")
+        # 加载配置
+        with open('checkpoints/config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # 使用正确的配置路径
+        config['DiT'] = config['s2mel']['DiT']
+        config['style_encoder'] = config['s2mel']['style_encoder']
+        config['wavenet'] = config['s2mel']['wavenet']
+        
+        # 创建 MLX 模型
+        mlx_model = MLXCFM(config)
+        
+        print("✅ MLX 模型创建完成")
+        return mlx_model
+        
+    except Exception as e:
+        print(f"❌ MLX 模型创建失败: {e}")
+        return None
+
+def fix_cond_projection_weights(mlx_model, pytorch_weight, pytorch_bias):
+    """修复 cond_projection 权重"""
+    print("🔧 修复 cond_projection 权重...")
+    
+    # 获取 cond_projection 层
+    cond_proj = mlx_model.estimator.cond_projection
+    
+    print(f"修复前:")
+    print(f"  权重范围: [{cond_proj.weight.min():.6f}, {cond_proj.weight.max():.6f}]")
+    print(f"  偏置范围: [{cond_proj.bias.min():.6f}, {cond_proj.bias.max():.6f}]")
+    
+    # 加载正确的权重
+    cond_proj.weight = mx.array(pytorch_weight)
+    cond_proj.bias = mx.array(pytorch_bias)
+    
+    print(f"修复后:")
+    print(f"  权重范围: [{cond_proj.weight.min():.6f}, {cond_proj.weight.max():.6f}]")
+    print(f"  偏置范围: [{cond_proj.bias.min():.6f}, {cond_proj.bias.max():.6f}]")
+    
+    return mlx_model
+
+def verify_weight_loading(mlx_model, pytorch_weight, pytorch_bias):
+    """验证权重加载是否正确"""
+    print("🔍 验证权重加载...")
+    
+    cond_proj = mlx_model.estimator.cond_projection
+    
+    # 转换为 numpy 进行比较
+    mlx_weight_np = np.array(cond_proj.weight)
+    mlx_bias_np = np.array(cond_proj.bias)
+    
+    # 计算差异
+    weight_diff = np.abs(pytorch_weight - mlx_weight_np)
+    bias_diff = np.abs(pytorch_bias - mlx_bias_np)
+    
+    print(f"权重差异:")
+    print(f"  最大差异: {np.max(weight_diff):.8f}")
+    print(f"  平均差异: {np.mean(weight_diff):.8f}")
+    print(f"  相对差异: {np.mean(weight_diff) / np.mean(np.abs(pytorch_weight)):.8f}")
+    
+    print(f"偏置差异:")
+    print(f"  最大差异: {np.max(bias_diff):.8f}")
+    print(f"  平均差异: {np.mean(bias_diff):.8f}")
+    print(f"  相对差异: {np.mean(bias_diff) / np.mean(np.abs(pytorch_bias)):.8f}")
+    
+    # 检查是否完全相同
+    weight_identical = np.allclose(pytorch_weight, mlx_weight_np, atol=1e-8)
+    bias_identical = np.allclose(pytorch_bias, mlx_bias_np, atol=1e-8)
+    
+    print(f"权重是否相同 (atol=1e-8):")
+    print(f"  weight: {weight_identical}")
+    print(f"  bias: {bias_identical}")
+    
+    return weight_identical and bias_identical
+
+def test_forward_pass(mlx_model):
+    """测试前向传播"""
+    print("🧪 测试前向传播...")
+    
+    try:
+        # 创建测试输入
+        batch_size = 2
+        seq_len = 100
+        input_dim = 512
+        
+        test_input = mx.random.normal((batch_size, seq_len, input_dim))
+        
+        # 前向传播
+        output = mlx_model.estimator.cond_projection(test_input)
+        
+        print(f"✅ 前向传播测试成功:")
+        print(f"  输入形状: {test_input.shape}")
+        print(f"  输出形状: {output.shape}")
+        print(f"  输出范围: [{output.min():.6f}, {output.max():.6f}]")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ 前向传播测试失败: {e}")
+        return False
+
+def main():
+    """主函数"""
+    print("🔧 MLX 权重加载修复工具")
+    print("=" * 50)
+    
+    try:
+        # 1. 加载权重
+        pytorch_weight, pytorch_bias = load_pytorch_weights()
+        mlx_weight, mlx_bias = load_mlx_weights()
+        
+        # 2. 验证权重是否相同
+        weight_diff = np.abs(pytorch_weight - mlx_weight)
+        bias_diff = np.abs(pytorch_bias - mlx_bias)
+        
+        print(f"\n📊 权重文件对比:")
+        print(f"  权重最大差异: {np.max(weight_diff):.8f}")
+        print(f"  偏置最大差异: {np.max(bias_diff):.8f}")
+        
+        if np.max(weight_diff) < 1e-8 and np.max(bias_diff) < 1e-8:
+            print("✅ 权重文件完全相同")
         else:
-            print("❌ MLX t_embedder.mlp没有索引访问")
-    else:
-        print("❌ MLX t_embedder没有mlp属性")
-    
-    # 分析MLX cond_embedder权重
-    mlx_cond_embedder = mlx_estimator.cond_embedder
-    mlx_cond_weight = mlx_cond_embedder.weight
-    print(f"MLX cond_embedder权重: {mlx_cond_weight.shape}, 范围: [{mlx_cond_weight.min():.6f}, {mlx_cond_weight.max():.6f}]")
-    
-    print("\n4. 对比权重差异...")
-    
-    # 对比cond_embedder权重
-    pytorch_cond_weight_np = pytorch_cond_weight.detach().cpu().numpy()
-    mlx_cond_weight_np = mlx_cond_weight
-    
-    cond_weight_diff = np.abs(pytorch_cond_weight_np - mlx_cond_weight_np)
-    print(f"cond_embedder权重差异:")
-    print(f"  最大差异: {cond_weight_diff.max():.6f}")
-    print(f"  平均差异: {cond_weight_diff.mean():.6f}")
-    print(f"  标准差差异: {cond_weight_diff.std():.6f}")
-    print(f"  差异比例: {cond_weight_diff.max() / pytorch_cond_weight_np.std():.6f}")
-    
-    print("\n5. 检查MLX缓存状态...")
-    
-    cache_path = Path("s2mel.npz")
-    if cache_path.exists():
-        print(f"✅ 找到MLX缓存: {cache_path}")
+            print("⚠️ 权重文件存在差异")
         
-        # 加载缓存并检查权重
-        cache_data = np.load(cache_path)
-        print(f"缓存中的键: {list(cache_data.keys())}")
+        # 3. 创建 MLX 模型
+        mlx_model = create_mlx_model()
+        if mlx_model is None:
+            return
         
-        # 查找t_embedder和cond_embedder权重
-        t_embedder_keys = [k for k in cache_data.keys() if 't_embedder' in k]
-        cond_embedder_keys = [k for k in cache_data.keys() if 'cond_embedder' in k]
+        # 4. 修复权重
+        mlx_model = fix_cond_projection_weights(mlx_model, pytorch_weight, pytorch_bias)
         
-        print(f"缓存中的t_embedder键: {t_embedder_keys}")
-        print(f"缓存中的cond_embedder键: {cond_embedder_keys}")
+        # 5. 验证修复
+        success = verify_weight_loading(mlx_model, pytorch_weight, pytorch_bias)
         
-        if t_embedder_keys:
-            cached_t_weight = cache_data[t_embedder_keys[0]]
-            print(f"缓存的t_embedder权重形状: {cached_t_weight.shape}")
-            print(f"缓存的t_embedder权重统计: min={cached_t_weight.min():.6f}, max={cached_t_weight.max():.6f}")
+        # 6. 测试前向传播
+        forward_success = test_forward_pass(mlx_model)
+        
+        # 7. 总结
+        print(f"\n🎯 修复结果:")
+        print(f"  权重加载: {'✅ 成功' if success else '❌ 失败'}")
+        print(f"  前向传播: {'✅ 成功' if forward_success else '❌ 失败'}")
+        
+        if success and forward_success:
+            print("\n🎉 MLX 权重加载修复完成!")
+        else:
+            print("\n⚠️ 修复过程中出现问题，请检查错误信息")
             
-            # 对比缓存的权重和PyTorch权重
-            cached_t_diff = np.abs(pytorch_t_weight.detach().cpu().numpy() - cached_t_weight)
-            print(f"缓存t_embedder权重差异: 最大={cached_t_diff.max():.6f}, 平均={cached_t_diff.mean():.6f}")
-        
-        if cond_embedder_keys:
-            cached_cond_weight = cache_data[cond_embedder_keys[0]]
-            print(f"缓存的cond_embedder权重形状: {cached_cond_weight.shape}")
-            print(f"缓存的cond_embedder权重统计: min={cached_cond_weight.min():.6f}, max={cached_cond_weight.max():.6f}")
-            
-            # 对比缓存的权重和PyTorch权重
-            cached_cond_diff = np.abs(pytorch_cond_weight_np - cached_cond_weight)
-            print(f"缓存cond_embedder权重差异: 最大={cached_cond_diff.max():.6f}, 平均={cached_cond_diff.mean():.6f}")
-    else:
-        print(f"❌ 未找到MLX缓存: {cache_path}")
-        print("需要重新生成MLX缓存")
-    
-    print("\n6. 重新生成MLX缓存...")
-    
-    # 重新生成MLX缓存
-    print("正在重新生成MLX缓存...")
-    
-    # 获取S2MEL状态字典
-    s2mel_state_dict = tts.s2mel.state_dict()
-    print(f"S2MEL状态字典键数量: {len(s2mel_state_dict)}")
-    
-    # 使用MLXModelCache重新生成缓存
-    mlx_cache = MLXModelCache()
-    cache_result = mlx_cache.convert_and_cache("s2mel", state_dict=s2mel_state_dict)
-    print(f"缓存生成结果: {cache_result}")
-    
-    # 验证新生成的缓存
-    if cache_path.exists():
-        print("✅ 成功生成MLX缓存")
-        
-        # 重新加载缓存并检查权重
-        cache_data = np.load(cache_path)
-        print(f"新缓存中的键: {list(cache_data.keys())}")
-        
-        # 查找t_embedder和cond_embedder权重
-        t_embedder_keys = [k for k in cache_data.keys() if 't_embedder' in k]
-        cond_embedder_keys = [k for k in cache_data.keys() if 'cond_embedder' in k]
-        
-        print(f"新缓存中的t_embedder键: {t_embedder_keys}")
-        print(f"新缓存中的cond_embedder键: {cond_embedder_keys}")
-        
-        if t_embedder_keys:
-            cached_t_weight = cache_data[t_embedder_keys[0]]
-            print(f"新缓存的t_embedder权重形状: {cached_t_weight.shape}")
-            print(f"新缓存的t_embedder权重统计: min={cached_t_weight.min():.6f}, max={cached_t_weight.max():.6f}")
-            
-            # 对比新缓存的权重和PyTorch权重
-            cached_t_diff = np.abs(pytorch_t_weight.detach().cpu().numpy() - cached_t_weight)
-            print(f"新缓存t_embedder权重差异: 最大={cached_t_diff.max():.6f}, 平均={cached_t_diff.mean():.6f}")
-        
-        if cond_embedder_keys:
-            cached_cond_weight = cache_data[cond_embedder_keys[0]]
-            print(f"新缓存的cond_embedder权重形状: {cached_cond_weight.shape}")
-            print(f"新缓存的cond_embedder权重统计: min={cached_cond_weight.min():.6f}, max={cached_cond_weight.max():.6f}")
-            
-            # 对比新缓存的权重和PyTorch权重
-            cached_cond_diff = np.abs(pytorch_cond_weight_np - cached_cond_weight)
-            print(f"新缓存cond_embedder权重差异: 最大={cached_cond_diff.max():.6f}, 平均={cached_cond_diff.mean():.6f}")
-    else:
-        print("❌ 缓存生成失败")
-    
-    print("\n=== 修复总结 ===")
-    print("1. ✅ 分析了PyTorch和MLX权重结构")
-    print("2. ✅ 识别了权重差异问题")
-    print("3. ✅ 重新生成了MLX缓存")
-    print("4. ✅ 验证了缓存权重一致性")
-    print("\n建议:")
-    print("- 重新运行问题模块分析脚本验证修复效果")
-    print("- 如果问题仍然存在，需要检查MLX权重转换逻辑")
+    except Exception as e:
+        print(f"❌ 修复过程中出现错误: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    fix_mlx_weight_loading()
+    main()

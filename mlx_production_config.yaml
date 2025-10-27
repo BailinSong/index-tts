@@ -1,0 +1,46 @@
+# MLX 生产环境配置
+# 确保 MLX 模型在生产环境中正确工作
+
+# 权重加载配置
+MLX_WEIGHT_LOADING:
+  # 是否启用权重验证
+  enable_weight_verification: true
+  
+  # 权重差异容忍度
+  weight_tolerance: 1e-8
+  
+  # 是否自动修复权重
+  auto_fix_weights: true
+
+# 初始化配置
+MLX_INITIALIZATION:
+  # 使用 Kaiming uniform 初始化
+  use_kaiming_uniform: true
+  
+  # Kaiming uniform 参数
+  kaiming_a: 2.23606797749979  # sqrt(5)
+  
+  # 是否验证初始化范围
+  verify_init_range: true
+
+# 性能配置
+MLX_PERFORMANCE:
+  # 预热轮数
+  warmup_rounds: 5
+  
+  # 性能测试轮数
+  performance_test_rounds: 100
+  
+  # 最小吞吐量要求 (tokens/s)
+  min_throughput: 1000000
+
+# 调试配置
+MLX_DEBUG:
+  # 是否启用详细日志
+  verbose_logging: true
+  
+  # 是否保存调试信息
+  save_debug_info: false
+  
+  # 调试信息保存路径
+  debug_info_path: "debug/mlx_debug.json"

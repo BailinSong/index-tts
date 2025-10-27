@@ -596,3 +596,25 @@ class MLXCFMRewritten(nn.Module):
             result = mlx_to_torch(result, device='mps')
         
         return result
+
+    def _init_cond_projection_kaiming(self):
+        """使用 Kaiming uniform 初始化 cond_projection"""
+        import math
+        import mlx.core as mx
+        
+        input_dim = self.cond_projection.weight.shape[1]
+        output_dim = self.cond_projection.weight.shape[0]
+        
+        # 使用与 PyTorch 相同的 Kaiming uniform 初始化
+        a = math.sqrt(5)  # PyTorch 默认值
+        fan_in = input_dim
+        bound = a / math.sqrt(fan_in) if fan_in > 0 else 0
+        
+        # 重新初始化权重和偏置
+        weight = mx.random.uniform(-bound, bound, (output_dim, input_dim))
+        bias = mx.random.uniform(-bound, bound, (output_dim,))
+        
+        self.cond_projection.weight = weight
+        self.cond_projection.bias = bias
+        
+        print(f"   🔧 cond_projection initialized with Kaiming uniform: bound=±{bound:.6f}")
