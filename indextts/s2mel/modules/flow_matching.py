@@ -107,7 +107,22 @@ class BASECFM(torch.nn.Module, ABC):
                 stacked_t = torch.cat([t.unsqueeze(0), t.unsqueeze(0)], dim=0)
 
                 # 逐层调试：记录estimator输入
-                # 调试输出已移除
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_input", 
+                                    pytorch_data={
+                                        'x': stacked_x,
+                                        'prompt_x': stacked_prompt_x, 
+                                        'x_lens': x_lens,
+                                        't': stacked_t,
+                                        'style': stacked_style,
+                                        'mu': stacked_mu
+                                    },
+                                    step=step,
+                                    additional_info={'cfg_enabled': True})
+                    except ImportError:
+                        pass
 
                 # Perform a single forward pass for both original and CFG inputs
                 stacked_dphi_dt = self.estimator(
@@ -116,7 +131,15 @@ class BASECFM(torch.nn.Module, ABC):
 
                 # 逐层调试：记录estimator输出
                 if debug_layers:
-                                        print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
+                    print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_output",
+                                    pytorch_data={'dphi_dt': stacked_dphi_dt},
+                                    step=step,
+                                    additional_info={'cfg_enabled': True})
+                    except ImportError:
+                        pass
 
                 # Split the output back into the original and CFG components
                 dphi_dt, cfg_dphi_dt = stacked_dphi_dt.chunk(2, dim=0)
@@ -125,12 +148,36 @@ class BASECFM(torch.nn.Module, ABC):
                 dphi_dt = (1.0 + inference_cfg_rate) * dphi_dt - inference_cfg_rate * cfg_dphi_dt
             else:
                 # 调试输出已移除
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_input", 
+                                    pytorch_data={
+                                        'x': x,
+                                        'prompt_x': prompt_x, 
+                                        'x_lens': x_lens,
+                                        't': t.unsqueeze(0),
+                                        'style': style,
+                                        'mu': mu
+                                    },
+                                    step=step,
+                                    additional_info={'cfg_enabled': False})
+                    except ImportError:
+                        pass
                 
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t.unsqueeze(0), style, mu)
                 
                 # 逐层调试：记录estimator输出
                 if debug_layers:
-                                        print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
+                    print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_output",
+                                    pytorch_data={'dphi_dt': dphi_dt},
+                                    step=step,
+                                    additional_info={'cfg_enabled': False})
+                    except ImportError:
+                        pass
 
             # 调试输出已移除
 

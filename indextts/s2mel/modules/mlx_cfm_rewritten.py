@@ -290,12 +290,35 @@ class MLXDiTRewritten(nn.Module):
         if t.ndim == 0:
             t = mx.array([t.item()])
         t_emb = self.t_embedder(t)  # (batch, hidden_dim)
-                # Project conditioning - 与PyTorch版本完全一致
+        
+        # 调试：记录 timestep embedding
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("timestep_embedding", mlx_data={'t_emb': t_emb}, layer=0)
+        except ImportError:
+            pass
+        
+        # Project conditioning - 与PyTorch版本完全一致
         # 注意：PyTorch版本总是使用cond_projection，不管content_type
         cond_proj = self.cond_projection(cond)  # (batch, seq_len, hidden_dim)
-                # Transpose x and prompt_x to (batch, seq_len, channels) - 与PyTorch版本完全一致
+        
+        # 调试：记录 conditioning projection
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("cond_projection", mlx_data={'cond_proj': cond_proj}, layer=0)
+        except ImportError:
+            pass
+        
+        # Transpose x and prompt_x to (batch, seq_len, channels) - 与PyTorch版本完全一致
         x_t = x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
         prompt_x_t = prompt_x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
+        
+        # 调试：记录 x embedding
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("x_embedding", mlx_data={'x_t': x_t, 'prompt_x_t': prompt_x_t}, layer=0)
+        except ImportError:
+            pass
                         # Concatenate inputs: [x, prompt_x, cond] - 与PyTorch版本完全一致
         x_in = mx.concatenate([x_t, prompt_x_t, cond_proj], axis=-1)
                 # Add style conditioning if not using style_as_token - 与PyTorch版本完全一致
@@ -359,6 +382,13 @@ class MLXDiTRewritten(nn.Module):
             mask=mask_expanded
         )
         
+        # 调试：记录 transformer 输出
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("transformer_output", mlx_data={'x_res': x_res}, layer=0)
+        except ImportError:
+            pass
+        
         # 调试输出已移除
         
         # Remove added tokens - 与PyTorch版本完全一致
@@ -398,6 +428,14 @@ class MLXDiTRewritten(nn.Module):
             x_out = self.final_mlp_0(x_res)
             x_out = nn.silu(x_out)
             x_out = self.final_mlp_2(x_out)
+        
+        # 调试：记录 final layer 输出
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("final_layer_output", mlx_data={'x_out': x_out}, layer=0)
+        except ImportError:
+            pass
+        
         # Transpose back to (batch, out_channels, seq_len) - 与PyTorch版本完全一致
         x_out = x_out.transpose(0, 2, 1)
                 # Convert back to PyTorch if needed

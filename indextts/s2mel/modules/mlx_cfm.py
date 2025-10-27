@@ -534,6 +534,24 @@ class MLXCFM(nn.Module):
                 # Duplicate x_lens for both batches
                 stacked_x_lens = mx.concatenate([x_lens, x_lens], axis=0)
                 
+                # 调试：记录 estimator 输入
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_input",
+                                    mlx_data={
+                                        'x': stacked_x,
+                                        'prompt_x': stacked_prompt_x,
+                                        'x_lens': stacked_x_lens, 
+                                        't': stacked_t,
+                                        'style': stacked_style,
+                                        'mu': stacked_mu
+                                    },
+                                    step=step,
+                                    additional_info={'cfg_enabled': True})
+                    except ImportError:
+                        pass
+                
                 # Forward pass
                 stacked_dphi_dt = self.estimator(
                     stacked_x, stacked_prompt_x, stacked_x_lens, 
@@ -541,13 +559,54 @@ class MLXCFM(nn.Module):
                     mask_content=False  # First half uses content
                 )
                 
+                # 调试：记录 estimator 输出
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_output",
+                                    mlx_data={'dphi_dt': stacked_dphi_dt},
+                                    step=step,
+                                    additional_info={'cfg_enabled': True})
+                    except ImportError:
+                        pass
+                
                 # Split and apply CFG - 与PyTorch版本完全一致
                 dphi_dt, cfg_dphi_dt = mx.split(stacked_dphi_dt, 2, axis=0)
                 dphi_dt = (1.0 + inference_cfg_rate) * dphi_dt - inference_cfg_rate * cfg_dphi_dt
             else:
                 # No CFG - 与PyTorch版本完全一致
                 t_scalar = mx.array([float(t)])  # 与PyTorch的t.unsqueeze(0)对应
+                
+                # 调试：记录 estimator 输入
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_input",
+                                    mlx_data={
+                                        'x': x,
+                                        'prompt_x': prompt_x,
+                                        'x_lens': x_lens, 
+                                        't': t_scalar,
+                                        'style': style,
+                                        'mu': mu
+                                    },
+                                    step=step,
+                                    additional_info={'cfg_enabled': False})
+                    except ImportError:
+                        pass
+                
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t_scalar, style, mu)
+                
+                # 调试：记录 estimator 输出
+                if debug_layers:
+                    try:
+                        from indextts.utils.cfm_debugger import log_cfm_stage
+                        log_cfm_stage("estimator_output",
+                                    mlx_data={'dphi_dt': dphi_dt},
+                                    step=step,
+                                    additional_info={'cfg_enabled': False})
+                    except ImportError:
+                        pass
             
             # 逐层调试输出
             if debug_layers:
