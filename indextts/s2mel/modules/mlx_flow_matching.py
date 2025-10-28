@@ -523,6 +523,10 @@ class MLXCFM(nn.Module):
             self.zero_prompt_speech_token = dit_config.get('zero_prompt_speech_token', False)
         
         print(">> MLX CFM initialized with DiT estimator")
+        
+        # CFM 缓存相关
+        self._cfm_cache_enabled = True
+        self._cfm_cache_dir = "cfm_production_cache"
     
     def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5, debug_layers=False):
         """
@@ -541,6 +545,9 @@ class MLXCFM(nn.Module):
         Returns:
             Generated mel (batch, in_channels, seq_len) - MLX array
         """
+        # 缓存 CFM 输入数据
+        self._cache_cfm_inputs(x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate)
+        
         # 简洁的输入信息（仅在debug模式下显示）
         if debug_layers:
             print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
@@ -699,7 +706,84 @@ class MLXCFM(nn.Module):
             print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
             print(f"   x mean: {float(x.mean()):.6f}, std: {float(x.std()):.6f}")
         
+        # 缓存 CFM 输出数据
+        self._cache_cfm_output(x)
+        
         return x
+    
+    def _cache_cfm_inputs(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate):
+        """缓存 CFM 输入数据"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'x': x,
+                'x_lens': x_lens,
+                'prompt': prompt,
+                'mu': mu,
+                'style': style,
+                'f0': f0,
+                't_span': t_span,
+                'inference_cfg_rate': inference_cfg_rate,
+                'timestamp': time.time(),
+                'model_type': 'mlx'
+            }
+            
+            # 保存缓存
+            filename = f"cfm_mlx_inputs_{int(time.time() * 1000)}.pkl"
+            filepath = os.path.join(self._cfm_cache_dir, filename)
+            
+            with open(filepath, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+            print(f"🔍 Cached MLX CFM inputs: {filename}")
+            print(f"   📊 Shapes: x={x.shape}, mu={mu.shape}, prompt={prompt.shape}, style={style.shape}")
+            print(f"   📊 x_lens: {x_lens.item()}, cfg_rate: {inference_cfg_rate}")
+            
+        except Exception as e:
+            print(f"⚠️  CFM input caching failed: {e}")
+    
+    def _cache_cfm_output(self, output):
+        """缓存 CFM 输出数据"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'output': output,
+                'timestamp': time.time(),
+                'model_type': 'mlx'
+            }
+            
+            # 保存缓存
+            filename = f"cfm_mlx_output_{int(time.time() * 1000)}.pkl"
+            filepath = os.path.join(self._cfm_cache_dir, filename)
+            
+            with open(filepath, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+            print(f"🔍 Cached MLX CFM output: {filename}")
+            print(f"   📊 Output shape: {output.shape}")
+            
+        except Exception as e:
+            print(f"⚠️  CFM output caching failed: {e}")
     
     def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5, unified_random=None):
         """

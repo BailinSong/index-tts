@@ -26,6 +26,10 @@ class BASECFM(torch.nn.Module, ABC):
             self.zero_prompt_speech_token = args.DiT.zero_prompt_speech_token
         else:
             self.zero_prompt_speech_token = False
+        
+        # CFM 缓存相关
+        self._cfm_cache_enabled = True
+        self._cfm_cache_dir = "cfm_production_cache"
 
     @torch.inference_mode()
     def inference(self, mu, x_lens, prompt, style, f0, n_timesteps, temperature=1.0, inference_cfg_rate=0.5, unified_random=None):
@@ -76,6 +80,9 @@ class BASECFM(torch.nn.Module, ABC):
             style (torch.Tensor): reference global style
                 shape: (batch_size, 192)
         """
+        # 缓存 CFM 输入数据
+        self._cache_cfm_inputs(x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate)
+        
         # 简洁的输入信息（仅在debug模式下显示）
         if debug_layers:
             print(f"   x_lens: {x_lens}")
@@ -197,6 +204,9 @@ class BASECFM(torch.nn.Module, ABC):
                 dt = t_span[step + 1] - t
             x[:, :, :prompt_len] = 0
 
+        # 缓存 CFM 输出数据
+        self._cache_cfm_output(sol[-1])
+        
         return sol[-1]
     def forward(self, x1, x_lens, prompt_lens, mu, style, unified_random=None):
         """Computes diffusion loss
@@ -250,6 +260,79 @@ class BASECFM(torch.nn.Module, ABC):
 
         return loss, estimator_out + (1 - self.sigma_min) * z
 
+    def _cache_cfm_inputs(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate):
+        """缓存 CFM 输入数据"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'x': x,
+                'x_lens': x_lens,
+                'prompt': prompt,
+                'mu': mu,
+                'style': style,
+                'f0': f0,
+                't_span': t_span,
+                'inference_cfg_rate': inference_cfg_rate,
+                'timestamp': time.time(),
+                'model_type': 'pytorch'
+            }
+            
+            # 保存缓存
+            filename = f"cfm_pytorch_inputs_{int(time.time() * 1000)}.pkl"
+            filepath = os.path.join(self._cfm_cache_dir, filename)
+            
+            with open(filepath, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+            print(f"🔍 Cached PyTorch CFM inputs: {filename}")
+            print(f"   📊 Shapes: x={x.shape}, mu={mu.shape}, prompt={prompt.shape}, style={style.shape}")
+            print(f"   📊 x_lens: {x_lens.item()}, cfg_rate: {inference_cfg_rate}")
+            
+        except Exception as e:
+            print(f"⚠️  CFM input caching failed: {e}")
+    
+    def _cache_cfm_output(self, output):
+        """缓存 CFM 输出数据"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'output': output,
+                'timestamp': time.time(),
+                'model_type': 'pytorch'
+            }
+            
+            # 保存缓存
+            filename = f"cfm_pytorch_output_{int(time.time() * 1000)}.pkl"
+            filepath = os.path.join(self._cfm_cache_dir, filename)
+            
+            with open(filepath, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+            print(f"🔍 Cached PyTorch CFM output: {filename}")
+            print(f"   📊 Output shape: {output.shape}")
+            
+        except Exception as e:
+            print(f"⚠️  CFM output caching failed: {e}")
 
 
 class CFM(BASECFM):
