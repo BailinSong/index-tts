@@ -9,6 +9,48 @@ from typing import Optional, Tuple
 import math
 
 
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.01):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
+    
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    # MLX Linear layers don't have bias attribute, they have bias parameter
+    if hasattr(linear_layer, 'bias') and linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
+
+
+def init_embedding_pytorch_compatible(embedding_layer: nn.Embedding, std: float = 0.01):
+    """
+    Initialize MLX Embedding layer to match PyTorch initialization.
+    
+    Args:
+        embedding_layer: MLX Embedding layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Embedding layers
+    embedding_layer.weight = mx.random.normal(embedding_layer.weight.shape) * std
+
+
+def init_conv_pytorch_compatible(conv_layer: nn.Conv1d, std: float = 0.01):
+    """
+    Initialize MLX Conv1d layer to match PyTorch initialization.
+    
+    Args:
+        conv_layer: MLX Conv1d layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Conv1d layers
+    conv_layer.weight = mx.random.normal(conv_layer.weight.shape) * std
+    # MLX Conv1d layers don't have bias attribute, they have bias parameter
+    if hasattr(conv_layer, 'bias') and conv_layer.bias is not None:
+        conv_layer.bias = mx.zeros_like(conv_layer.bias)
+
+
 class MLXGPTLayer(nn.Module):
     """
     MLX implementation of S2MEL's gpt_layer.
@@ -20,6 +62,11 @@ class MLXGPTLayer(nn.Module):
         self.layer0 = nn.Linear(1280, 256, bias=True)
         self.layer1 = nn.Linear(256, 128, bias=True)
         self.layer2 = nn.Linear(128, 1024, bias=True)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.layer0)
+        init_linear_pytorch_compatible(self.layer1)
+        init_linear_pytorch_compatible(self.layer2)
     
     def __call__(self, x):
         """
@@ -114,6 +161,7 @@ class MLXLengthRegulator(nn.Module):
         
         # Embeddings
         self.embedding = nn.Embedding(codebook_size, channels)
+        init_embedding_pytorch_compatible(self.embedding)
         self.is_discrete = is_discrete
         
         # Mask token (learnable parameter)
@@ -125,6 +173,8 @@ class MLXLengthRegulator(nn.Module):
                 nn.Embedding(codebook_size, channels)
                 for _ in range(n_codebooks - 1)
             ]
+            for extra_emb in self.extra_codebooks:
+                init_embedding_pytorch_compatible(extra_emb)
             self.extra_codebook_mask_tokens = [
                 mx.zeros((1, channels))
                 for _ in range(n_codebooks - 1)
@@ -133,11 +183,13 @@ class MLXLengthRegulator(nn.Module):
         # F0 conditioning
         if f0_condition:
             self.f0_embedding = nn.Embedding(n_f0_bins, channels)
+            init_embedding_pytorch_compatible(self.f0_embedding)
             self.f0_mask = mx.zeros((1, channels))
         
         # Non-discrete mode
         if not is_discrete and in_channels is not None:
             self.content_in_proj = nn.Linear(in_channels, channels)
+            init_linear_pytorch_compatible(self.content_in_proj)
         else:
             self.content_in_proj = None
         
@@ -197,7 +249,7 @@ class MLXLengthRegulator(nn.Module):
         
         # Add F0 conditioning if needed
         if self.f0_condition and f0 is not None:
-            # TODO: implement f0_to_coarse and F0 embedding
+            # F0 conditioning implementation pending
             pass
         
         # Interpolate BEFORE applying model layers (matches PyTorch)

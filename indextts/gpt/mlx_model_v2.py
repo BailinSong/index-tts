@@ -2,6 +2,7 @@
 Native MLX Implementation of GPT Model for Apple Silicon M4
 
 Full Transformer implementation with proper attention and feed-forward layers.
+Uses MLX built-in layers with PyTorch-compatible initialization.
 """
 
 import mlx.core as mx
@@ -11,28 +12,30 @@ import math
 import numpy as np
 
 
-class MLXLinear(nn.Module):
-    """MLX Linear layer matching PyTorch behavior."""
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.02):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
     
-    def __init__(self, in_features: int, out_features: int):
-        super().__init__()
-        scale = (1.0 / in_features) ** 0.5
-        self.weight = mx.random.uniform(-scale, scale, (out_features, in_features))
-        self.bias = mx.zeros(out_features)
-    
-    def __call__(self, x):
-        return x @ self.weight.T + self.bias
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.02)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    if linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
 
 
-class MLXEmbedding(nn.Module):
-    """MLX Embedding layer."""
+def init_embedding_pytorch_compatible(embedding_layer: nn.Embedding, std: float = 0.02):
+    """
+    Initialize MLX Embedding layer to match PyTorch initialization.
     
-    def __init__(self, num_embeddings: int, embedding_dim: int):
-        super().__init__()
-        self.weight = mx.random.normal((num_embeddings, embedding_dim)) * 0.02
-    
-    def __call__(self, indices):
-        return self.weight[indices]
+    Args:
+        embedding_layer: MLX Embedding layer
+        std: Standard deviation for normal initialization (default: 0.02)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Embedding layers
+    embedding_layer.weight = mx.random.normal(embedding_layer.weight.shape) * std
 
 
 class MLXLearnedPositionEmbeddings(nn.Module):
@@ -57,7 +60,6 @@ class MLXLearnedPositionEmbeddings(nn.Module):
             Position embeddings for the sequence
         """
         import torch
-        import mlx.core as mx
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         
         # Get sequence length
@@ -98,10 +100,16 @@ class MLXMultiHeadAttention(nn.Module):
         self.scale = self.head_dim ** -0.5
         
         # Q, K, V projections
-        self.q_proj = MLXLinear(embed_dim, embed_dim)
-        self.k_proj = MLXLinear(embed_dim, embed_dim)
-        self.v_proj = MLXLinear(embed_dim, embed_dim)
-        self.out_proj = MLXLinear(embed_dim, embed_dim)
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.q_proj)
+        init_linear_pytorch_compatible(self.k_proj)
+        init_linear_pytorch_compatible(self.v_proj)
+        init_linear_pytorch_compatible(self.out_proj)
     
     def __call__(self, x, causal_mask=None, past_kv=None, use_cache=False):
         """
@@ -180,8 +188,12 @@ class MLXTransformerBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(embed_dim)
         
         # Feed-forward network
-        self.mlp_fc = MLXLinear(embed_dim, embed_dim * 4)
-        self.mlp_proj = MLXLinear(embed_dim * 4, embed_dim)
+        self.mlp_fc = nn.Linear(embed_dim, embed_dim * 4)
+        self.mlp_proj = nn.Linear(embed_dim * 4, embed_dim)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.mlp_fc)
+        init_linear_pytorch_compatible(self.mlp_proj)
     
     def __call__(self, x, causal_mask=None, past_kv=None, use_cache=False):
         """
@@ -342,11 +354,16 @@ class UnifiedVoiceMLX(nn.Module):
             self.emo_layer = None
         
         # Speed embeddings (for duration control)
-        self.speed_emb = MLXEmbedding(2, model_dim)
+        self.speed_emb = nn.Embedding(2, model_dim)
+        init_embedding_pytorch_compatible(self.speed_emb)
         
         # Core embeddings
-        self.text_embedding = MLXEmbedding(number_text_tokens + 1, model_dim)
-        self.mel_embedding = MLXEmbedding(number_mel_codes, model_dim)
+        self.text_embedding = nn.Embedding(number_text_tokens + 1, model_dim)
+        self.mel_embedding = nn.Embedding(number_mel_codes, model_dim)
+        
+        # Initialize embeddings with PyTorch-compatible weights
+        init_embedding_pytorch_compatible(self.text_embedding)
+        init_embedding_pytorch_compatible(self.mel_embedding)
         
         # Transformer layers (GPT2 style)
         self.transformer_blocks = [
@@ -361,28 +378,31 @@ class UnifiedVoiceMLX(nn.Module):
         # Positional embeddings (learned)
         max_mel_tokens = kwargs.get('max_mel_tokens', 1815)
         max_text_tokens = kwargs.get('max_text_tokens', 600)
-        self.mel_pos_embedding = MLXEmbedding(max_mel_tokens, model_dim)
+        self.mel_pos_embedding = nn.Embedding(max_mel_tokens, model_dim)
+        init_embedding_pytorch_compatible(self.mel_pos_embedding)
         # Use MLXLearnedPositionEmbeddings to match PyTorch LearnedPositionEmbeddings behavior
         self.text_pos_embedding = MLXLearnedPositionEmbeddings(max_text_tokens + 2, model_dim, init=0.02)
         
         # Conditioning parameters
         self.cond_num = kwargs.get('condition_num_latent', 32)
         
-        # Speed/duration embeddings (duplicate, already defined above at Line 256)
-        # self.speed_emb = MLXEmbedding(2, model_dim)
-        
         # Emotion and speaker conditioning layers (for non-MLX-conditioning mode)
         # Only create if not using pure MLX conditioning
         if not use_mlx_conditioning:
-            self.emo_layer = MLXLinear(model_dim, model_dim)
-            self.emovec_layer = MLXLinear(1024, model_dim)
+            self.emo_layer = nn.Linear(model_dim, model_dim)
+            self.emovec_layer = nn.Linear(1024, model_dim)
+            init_linear_pytorch_compatible(self.emo_layer)
+            init_linear_pytorch_compatible(self.emovec_layer)
         
         # Conditioning projection (always needed for compatibility)
-        self.cond_projection = MLXLinear(1024, model_dim)  # Project semantic features
+        self.cond_projection = nn.Linear(1024, model_dim)  # Project semantic features
+        init_linear_pytorch_compatible(self.cond_projection)
         
         # Output heads
-        self.mel_head = MLXLinear(model_dim, number_mel_codes)
-        self.text_head = MLXLinear(model_dim, number_text_tokens + 1)
+        self.mel_head = nn.Linear(model_dim, number_mel_codes)
+        self.text_head = nn.Linear(model_dim, number_text_tokens + 1)
+        init_linear_pytorch_compatible(self.mel_head)
+        init_linear_pytorch_compatible(self.text_head)
         
         # Normalization (used in lm_head, after gpt_ln_f)
         self.final_norm = nn.LayerNorm(model_dim)
@@ -1583,11 +1603,7 @@ class UnifiedVoiceMLX(nn.Module):
                 # 用户可通过 MLX_FIXED_SEED 环境变量设置固定种子用于调试
                 seed = int(time.time() * 1000000) % (2**32)
         
-        # Debug: 打印种子（可选）
-        debug_generation = kwargs.get('debug_generation', False)
-        if debug_generation:
-            print(f"[DEBUG] Random seed: {seed}")
-        
+        # Set random seed for reproducibility
         mx.random.seed(seed)
         
         # 🔧 按照PyTorch的方式构建logits_processor
@@ -2031,7 +2047,6 @@ class UnifiedVoiceMLX(nn.Module):
             raise RuntimeError("MLX emotion conditioning not enabled")
         
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
-        import mlx.core as mx
         
         # Ensure correct shape (b, time, 1024)
         if speech_conditioning_input.shape[-1] != 1024:
@@ -2182,7 +2197,6 @@ class UnifiedVoiceMLX(nn.Module):
         """
         from indextts.utils.mlx_utils import torch_to_mlx, mlx_to_torch
         import torch
-        import mlx.core as mx
         
         print(">> [MLX Native] Running pure MLX inference with Conformer + Perceiver")
         

@@ -23,6 +23,36 @@ def default(val, d):
     return val if exists(val) else d
 
 
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.01):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
+    
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    # MLX Linear layers don't have bias attribute, they have bias parameter
+    if hasattr(linear_layer, 'bias') and linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
+
+
+def init_conv_pytorch_compatible(conv_layer: nn.Conv1d, std: float = 0.01):
+    """
+    Initialize MLX Conv1d layer to match PyTorch initialization.
+    
+    Args:
+        conv_layer: MLX Conv1d layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Conv1d layers
+    conv_layer.weight = mx.random.normal(conv_layer.weight.shape) * std
+    # MLX Conv1d layers don't have bias attribute, they have bias parameter
+    if hasattr(conv_layer, 'bias') and conv_layer.bias is not None:
+        conv_layer.bias = mx.zeros_like(conv_layer.bias)
+
+
 # ============================================================================
 # RMSNorm (used in Perceiver)
 # ============================================================================
@@ -73,6 +103,11 @@ class MLXPerceiverAttention(nn.Module):
         self.to_q = nn.Linear(dim, dim_inner, bias=False)
         self.to_kv = nn.Linear(dim, dim_inner * 2, bias=False)
         self.to_out = nn.Linear(dim_inner, dim, bias=False)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.to_q)
+        init_linear_pytorch_compatible(self.to_kv)
+        init_linear_pytorch_compatible(self.to_out)
     
     def __call__(self, x, context=None, mask=None):
         """
@@ -149,6 +184,10 @@ class MLXFeedForward(nn.Module):
             MLXGEGLU(),
             nn.Linear(dim_inner, dim)
         ]
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.net[0])
+        init_linear_pytorch_compatible(self.net[2])
     
     def __call__(self, x):
         for layer in self.net:
@@ -193,6 +232,7 @@ class MLXPerceiverResampler(nn.Module):
         # Project context to model dim if needed
         if dim_context != dim:
             self.proj_context = nn.Linear(dim_context, dim)
+            init_linear_pytorch_compatible(self.proj_context)
         else:
             self.proj_context = None
         
@@ -267,8 +307,15 @@ class MLXRelativeMultiHeadAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.q_proj)
+        init_linear_pytorch_compatible(self.k_proj)
+        init_linear_pytorch_compatible(self.v_proj)
+        init_linear_pytorch_compatible(self.out_proj)
+        
         # Positional encoding projection (no bias)
         self.pos_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        init_linear_pytorch_compatible(self.pos_proj)
         
         # ✅ NEW: Learnable position biases (content and position)
         # These are used in matrix C and matrix D as described in Transformer-XL paper
@@ -368,6 +415,7 @@ class MLXDepthwiseConv1d(nn.Module):
             groups=channels,  # This makes it depthwise!
             bias=True
         )
+        init_conv_pytorch_compatible(self.conv)
     
     @property
     def weight(self):
@@ -416,6 +464,7 @@ class MLXConvolutionModule(nn.Module):
         
         # Pointwise expansion (for GLU: 2x channels)
         self.pointwise1 = nn.Linear(channels, 2 * channels)
+        init_linear_pytorch_compatible(self.pointwise1)
         
         # Depthwise convolution
         padding = kernel_size // 2
@@ -426,6 +475,7 @@ class MLXConvolutionModule(nn.Module):
         
         # Pointwise projection
         self.pointwise2 = nn.Linear(channels, channels)
+        init_linear_pytorch_compatible(self.pointwise2)
     
     def __call__(self, x, mask_pad=None):
         """
@@ -510,10 +560,21 @@ class MLXConformerBlock(nn.Module):
         
         # Feed-forward (只有一个！)
         self.norm_ff = nn.LayerNorm(dim, eps=1e-05)  # eps匹配PyTorch
+        
+        # 分开定义层以便初始化
+        self.ff_linear1 = nn.Linear(dim, ff_dim)
+        self.ff_silu = nn.SiLU()
+        self.ff_linear2 = nn.Linear(ff_dim, dim)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.ff_linear1)
+        init_linear_pytorch_compatible(self.ff_linear2)
+        
+        # 创建 Sequential 用于前向传播
         self.ff = nn.Sequential(
-            nn.Linear(dim, ff_dim),
-            nn.SiLU(),
-            nn.Linear(ff_dim, dim)
+            self.ff_linear1,
+            self.ff_silu,
+            self.ff_linear2
         )
         
         self.norm_final = nn.LayerNorm(dim, eps=1e-05)  # eps匹配PyTorch

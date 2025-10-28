@@ -11,6 +11,36 @@ from typing import Optional, Tuple, Dict, Any
 import typing as tp
 
 
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.01):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
+    
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    # MLX Linear layers don't have bias attribute, they have bias parameter
+    if hasattr(linear_layer, 'bias') and linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
+
+
+def init_conv_pytorch_compatible(conv_layer: nn.Conv1d, std: float = 0.01):
+    """
+    Initialize MLX Conv1d layer to match PyTorch initialization.
+    
+    Args:
+        conv_layer: MLX Conv1d layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Conv1d layers
+    conv_layer.weight = mx.random.normal(conv_layer.weight.shape) * std
+    # MLX Conv1d layers don't have bias attribute, they have bias parameter
+    if hasattr(conv_layer, 'bias') and conv_layer.bias is not None:
+        conv_layer.bias = mx.zeros_like(conv_layer.bias)
+
+
 def get_extra_padding_for_conv1d_mlx(x: mx.array, kernel_size: int, stride: int,
                                       padding_total: int = 0) -> int:
     """MLX版本的get_extra_padding_for_conv1d，完全复刻PyTorch版本"""
@@ -63,6 +93,7 @@ class MLXNormConv1d(nn.Module):
         self.causal = causal
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride,
                              dilation=dilation, groups=groups, bias=bias)
+        init_conv_pytorch_compatible(self.conv)
 
     def __call__(self, x):
         return self.conv(x)
@@ -225,6 +256,7 @@ class MLXWaveNet(nn.Module):
                 padding=0,
                 bias=True
             )
+            init_conv_pytorch_compatible(layer)
             self.res_skip_layers.append(layer)
         
         # Conditioning layer (if using global conditioning)
@@ -236,6 +268,7 @@ class MLXWaveNet(nn.Module):
                 padding=0,
                 bias=True
             )
+            init_conv_pytorch_compatible(self.cond_layer)
         else:
             self.cond_layer = None
         

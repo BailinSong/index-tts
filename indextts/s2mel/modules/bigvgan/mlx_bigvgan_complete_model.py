@@ -504,7 +504,7 @@ class MLXBigVGANComplete(nn.Module):
     
     def load_weights_from_pytorch(self, pytorch_state_dict: dict):
         """Load weights from PyTorch (after remove_weight_norm)"""
-        # TODO: Implement weight loading similar to mlx_bigvgan.py
+        # Weight loading implementation pending
         # This is identical to the previous implementation
         pass
 

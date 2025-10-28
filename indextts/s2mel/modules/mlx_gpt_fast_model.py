@@ -9,6 +9,33 @@ from typing import Optional, Tuple
 import math
 
 
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.01):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
+    
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    # MLX Linear layers don't have bias attribute, they have bias parameter
+    if hasattr(linear_layer, 'bias') and linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
+
+
+def init_embedding_pytorch_compatible(embedding_layer: nn.Embedding, std: float = 0.01):
+    """
+    Initialize MLX Embedding layer to match PyTorch initialization.
+    
+    Args:
+        embedding_layer: MLX Embedding layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Embedding layers
+    embedding_layer.weight = mx.random.normal(embedding_layer.weight.shape) * std
+
+
 def precompute_freqs_cis_mlx(seq_len: int, n_elem: int, base: int = 10000):
     """
     Precompute RoPE frequencies.
@@ -86,6 +113,7 @@ class MLXAdaptiveLayerNorm(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.project_layer = nn.Linear(d_model, 2 * d_model, bias=True)
+        init_linear_pytorch_compatible(self.project_layer)
         self.norm = MLXRMSNorm(d_model, eps=eps)
         self.eps = eps
     
@@ -141,12 +169,16 @@ class MLXAttentionGPTFast(nn.Module):
             # Cross-attention: Q from x, KV from context
             self.wq = nn.Linear(dim, n_heads * head_dim, bias=False)
             self.wkv = nn.Linear(context_dim, 2 * self.n_local_heads * head_dim, bias=False)
+            init_linear_pytorch_compatible(self.wq)
+            init_linear_pytorch_compatible(self.wkv)
         else:
             # Self-attention: QKV from x
             total_head_dim = (n_heads + 2 * self.n_local_heads) * head_dim
             self.wqkv = nn.Linear(dim, total_head_dim, bias=False)
+            init_linear_pytorch_compatible(self.wqkv)
         
         self.wo = nn.Linear(head_dim * n_heads, dim, bias=False)
+        init_linear_pytorch_compatible(self.wo)
         
         self.kv_cache = None  # Will be set if using cache
     
@@ -242,6 +274,11 @@ class MLXFeedForward(nn.Module):
         self.w1 = nn.Linear(dim, intermediate_size, bias=False)
         self.w3 = nn.Linear(dim, intermediate_size, bias=False)
         self.w2 = nn.Linear(intermediate_size, dim, bias=False)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.w1)
+        init_linear_pytorch_compatible(self.w3)
+        init_linear_pytorch_compatible(self.w2)
     
     def __call__(self, x):
         """
@@ -298,6 +335,7 @@ class MLXTransformerBlock(nn.Module):
         # U-ViT skip connection
         if uvit_skip_connection:
             self.skip_in_linear = nn.Linear(dim * 2, dim, bias=True)
+            init_linear_pytorch_compatible(self.skip_in_linear)
     
     def __call__(
         self,

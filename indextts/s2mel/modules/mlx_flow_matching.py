@@ -17,6 +17,48 @@ from indextts.s2mel.modules.mlx_wavenet_model import MLXWaveNet
 from indextts.s2mel.modules.mlx_diffusion_transformer import MLXCFMRewritten
 
 
+def init_linear_pytorch_compatible(linear_layer: nn.Linear, std: float = 0.01):
+    """
+    Initialize MLX Linear layer to match PyTorch initialization.
+    
+    Args:
+        linear_layer: MLX Linear layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Linear layers
+    linear_layer.weight = mx.random.normal(linear_layer.weight.shape) * std
+    # MLX Linear layers don't have bias attribute, they have bias parameter
+    if hasattr(linear_layer, 'bias') and linear_layer.bias is not None:
+        linear_layer.bias = mx.zeros_like(linear_layer.bias)
+
+
+def init_embedding_pytorch_compatible(embedding_layer: nn.Embedding, std: float = 0.01):
+    """
+    Initialize MLX Embedding layer to match PyTorch initialization.
+    
+    Args:
+        embedding_layer: MLX Embedding layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Embedding layers
+    embedding_layer.weight = mx.random.normal(embedding_layer.weight.shape) * std
+
+
+def init_conv_pytorch_compatible(conv_layer: nn.Conv1d, std: float = 0.01):
+    """
+    Initialize MLX Conv1d layer to match PyTorch initialization.
+    
+    Args:
+        conv_layer: MLX Conv1d layer
+        std: Standard deviation for normal initialization (default: 0.01)
+    """
+    # PyTorch uses normal_(mean=0.0, std=std) for Conv1d layers
+    conv_layer.weight = mx.random.normal(conv_layer.weight.shape) * std
+    # MLX Conv1d layers don't have bias attribute, they have bias parameter
+    if hasattr(conv_layer, 'bias') and conv_layer.bias is not None:
+        conv_layer.bias = mx.zeros_like(conv_layer.bias)
+
+
 def mlx_modulate(x, shift, scale):
     """
     Modulation function for AdaLN.
@@ -42,6 +84,10 @@ class MLXTimestepEmbedder(nn.Module):
         # MLP
         self.mlp_0 = nn.Linear(frequency_embedding_size, hidden_size, bias=True)
         self.mlp_2 = nn.Linear(hidden_size, hidden_size, bias=True)
+        
+        # Initialize with PyTorch-compatible weights
+        init_linear_pytorch_compatible(self.mlp_0)
+        init_linear_pytorch_compatible(self.mlp_2)
         
         # Precompute frequencies
         half = frequency_embedding_size // 2
@@ -97,10 +143,12 @@ class MLXStyleEmbedder(nn.Module):
         use_cfg_embedding = dropout_prob > 0
         if use_cfg_embedding:
             self.embedding_table = nn.Embedding(1, hidden_size)
+            init_embedding_pytorch_compatible(self.embedding_table)
         else:
             self.embedding_table = None
         
         self.style_in = nn.Linear(input_size, hidden_size, bias=True)
+        init_linear_pytorch_compatible(self.style_in)
     
     def __call__(self, labels, train=False, force_drop_ids=None):
         """
@@ -136,9 +184,11 @@ class MLXFinalLayer(nn.Module):
         
         # Linear projection
         self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        init_linear_pytorch_compatible(self.linear)
         
         # AdaLN modulation
         self.adaLN_0 = nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+        init_linear_pytorch_compatible(self.adaLN_0)
     
     def __call__(self, x, c):
         """
@@ -193,13 +243,16 @@ class MLXDiT(nn.Module):
         
         # Embedders
         self.x_embedder = nn.Linear(dit_cfg.in_channels, dit_cfg.hidden_dim, bias=True)
+        init_linear_pytorch_compatible(self.x_embedder)
         
         # Content embedding
         # Note: PyTorch creates BOTH cond_embedder and cond_projection, but only uses cond_projection
         # (see diffusion_transformer.py lines 132-133, 207)
         self.content_type = dit_cfg.content_type
         self.cond_embedder = nn.Embedding(dit_cfg.content_codebook_size, dit_cfg.hidden_dim)
+        init_embedding_pytorch_compatible(self.cond_embedder)
         self.cond_projection = nn.Linear(dit_cfg.content_dim, dit_cfg.hidden_dim, bias=True)
+        init_linear_pytorch_compatible(self.cond_projection)
         
         # Timestep embedder
         self.t_embedder = MLXTimestepEmbedder(dit_cfg.hidden_dim)
@@ -214,14 +267,17 @@ class MLXDiT(nn.Module):
             style_cfg.dim * self.transformer_style_condition * (not self.style_as_token)  # for style
         )
         self.cond_x_merge_linear = nn.Linear(merge_input_dim, dit_cfg.hidden_dim, bias=True)
+        init_linear_pytorch_compatible(self.cond_x_merge_linear)
         
         # Style as token mode
         if self.style_as_token:
             self.style_in = nn.Linear(style_cfg.dim, dit_cfg.hidden_dim, bias=True)
+            init_linear_pytorch_compatible(self.style_in)
         
         # Long skip connection
         if self.long_skip_connection:
             self.skip_linear = nn.Linear(dit_cfg.hidden_dim + dit_cfg.in_channels, dit_cfg.hidden_dim, bias=True)
+            init_linear_pytorch_compatible(self.skip_linear)
         
         # Final layer
         if self.final_layer_type == 'wavenet':
@@ -229,7 +285,9 @@ class MLXDiT(nn.Module):
             wavenet_cfg = config.wavenet
             self.t_embedder2 = MLXTimestepEmbedder(wavenet_cfg.hidden_dim)
             self.conv1 = nn.Linear(dit_cfg.hidden_dim, wavenet_cfg.hidden_dim, bias=True)
+            init_linear_pytorch_compatible(self.conv1)
             self.conv2 = nn.Conv1d(wavenet_cfg.hidden_dim, dit_cfg.in_channels, kernel_size=1, padding=0, bias=True)
+            init_conv_pytorch_compatible(self.conv2)
             
             self.wavenet = MLXWaveNet(
                 hidden_channels=wavenet_cfg.hidden_dim,
@@ -244,15 +302,19 @@ class MLXDiT(nn.Module):
                 wavenet_cfg.hidden_dim, 1, wavenet_cfg.hidden_dim
             )
             self.res_projection = nn.Linear(dit_cfg.hidden_dim, wavenet_cfg.hidden_dim, bias=True)
+            init_linear_pytorch_compatible(self.res_projection)
             self.wavenet_style_condition = wavenet_cfg.style_condition
         else:
             # MLP final layer
             self.final_mlp_0 = nn.Linear(dit_cfg.hidden_dim, dit_cfg.hidden_dim, bias=True)
             self.final_mlp_2 = nn.Linear(dit_cfg.hidden_dim, dit_cfg.in_channels, bias=True)
+            init_linear_pytorch_compatible(self.final_mlp_0)
+            init_linear_pytorch_compatible(self.final_mlp_2)
         
         # Content masking for CFG
         self.class_dropout_prob = dit_cfg.class_dropout_prob
         self.content_mask_embedder = nn.Embedding(1, dit_cfg.hidden_dim)
+        init_embedding_pytorch_compatible(self.content_mask_embedder)
         
         # Input positions buffer
         self.input_pos = mx.arange(16384, dtype=mx.int32)
