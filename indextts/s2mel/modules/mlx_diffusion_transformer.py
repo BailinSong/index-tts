@@ -7,12 +7,12 @@ import mlx.nn as nn
 from typing import Optional
 import math
 
-from indextts.s2mel.modules.mlx_gpt_fast import (
+from indextts.s2mel.modules.mlx_gpt_fast_model import (
     MLXTransformerGPTFast,
     MLXAdaptiveLayerNorm,
     create_mlx_transformer_from_config
 )
-from indextts.s2mel.modules.mlx_wavenet import MLXWaveNet
+from indextts.s2mel.modules.mlx_wavenet_model import MLXWaveNet
 
 
 def mlx_modulate(x, shift, scale):
@@ -112,29 +112,18 @@ class MLXFinalLayerRewritten(nn.Module):
         c: (batch, hidden_size)
         Returns: (batch, seq_len, patch_size * patch_size * out_channels)
         """
-        # 逐层调试：记录final_layer输入
-        print(f"   c: {c.shape}, min={float(c.min()):.6f}, max={float(c.max()):.6f}, mean={float(c.mean()):.6f}")
-        
         # 与PyTorch版本完全一致
         c_emb = self.adaLN_modulation(c)
-        print(f"   c_emb: {c_emb.shape}, min={float(c_emb.min()):.6f}, max={float(c_emb.max()):.6f}, mean={float(c_emb.mean()):.6f}")
         
         # 确保split操作与PyTorch的chunk操作一致
         # PyTorch: .chunk(2, dim=1) 在最后一个维度分割
         # MLX: mx.split(..., 2, axis=-1) 在最后一个维度分割
         shift, scale = mx.split(c_emb, 2, axis=-1)
-        print(f"   shift: {shift.shape}, min={float(shift.min()):.6f}, max={float(shift.max()):.6f}, mean={float(shift.mean()):.6f}")
-        print(f"   scale: {scale.shape}, min={float(scale.min()):.6f}, max={float(scale.max()):.6f}, mean={float(scale.mean()):.6f}")
         
         # Apply modulation
         x_norm = self.norm_final(x)
-        print(f"   x_norm: {x_norm.shape}, min={float(x_norm.min()):.6f}, max={float(x_norm.max()):.6f}, mean={float(x_norm.mean()):.6f}")
-        
         x_modulated = mlx_modulate(x_norm, shift, scale)
-        print(f"   x_modulated: {x_modulated.shape}, min={float(x_modulated.min()):.6f}, max={float(x_modulated.max()):.6f}, mean={float(x_modulated.mean()):.6f}")
-        
         x = self.linear(x_modulated)
-        print(f"   x_output: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}, mean={float(x.mean()):.6f}")
         return x
 
 
@@ -186,6 +175,9 @@ class MLXDiTRewritten(nn.Module):
                                         dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
         self.cond_projection = nn.Linear(dit_cfg['content_dim'] if isinstance(dit_cfg, dict) else dit_cfg.content_dim, 
                                        dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, bias=True)
+        
+        # 🔧 使用 Kaiming uniform 初始化 cond_projection
+        # self._init_cond_projection_kaiming()  # 暂时注释，先测试权重加载修复
         
         # Timestep embedder
         self.t_embedder = MLXTimestepEmbedderRewritten(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim)
@@ -264,12 +256,13 @@ class MLXDiTRewritten(nn.Module):
         """
         import torch
         
-        # 逐层调试：记录输入
-        print(f"   prompt_x: {prompt_x.shape}, min={float(prompt_x.min()):.6f}, max={float(prompt_x.max()):.6f}")
-        print(f"   t: {t.shape}, min={float(t.min()):.6f}, max={float(t.max()):.6f}")
-        print(f"   style: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
-        print(f"   cond: {cond.shape}, min={float(cond.min()):.6f}, max={float(cond.max()):.6f}")
-        print(f"   mask_content: {mask_content}")
+        # 逐层调试：记录输入（仅在debug模式下显示）
+        if hasattr(self, '_debug_layers') and self._debug_layers:
+            print(f"   prompt_x: {prompt_x.shape}, min={float(prompt_x.min()):.6f}, max={float(prompt_x.max()):.6f}")
+            print(f"   t: {t.shape}, min={float(t.min()):.6f}, max={float(t.max()):.6f}")
+            print(f"   style: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
+            print(f"   cond: {cond.shape}, min={float(cond.min()):.6f}, max={float(cond.max()):.6f}")
+            print(f"   mask_content: {mask_content}")
         
         # Convert inputs to MLX if needed
         if isinstance(x, torch.Tensor):

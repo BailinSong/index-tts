@@ -310,115 +310,16 @@ class MLXBigVGAN(nn.Module):
         
         return x
     
+    # Weight loading is now handled by mlx_bigvgan_model_weights.py
+    # This method is kept for backward compatibility but delegates to the weights module
     def load_weights_from_pytorch(self, pytorch_state_dict: dict):
         """
         Load weights from PyTorch BigVGAN checkpoint.
         
-        NOTE: Expects state_dict AFTER remove_weight_norm() has been called!
-        The weights should be in regular format, not weight_g/weight_v.
-        
-        Handles weight format conversion:
-        - PyTorch Conv1d: (out_channels, in_channels, kernel_size)
-        - MLX Conv1d: (out_channels, kernel_size, in_channels)
+        NOTE: This method now delegates to the dedicated weights module.
         """
-        import numpy as np
-        
-        loaded = 0
-        
-        # Helper functions to convert weights
-        def convert_conv1d_weight(w):
-            """PyTorch Conv1d (O, I, K) -> MLX (O, K, I)"""
-            return w.transpose(0, 2, 1)
-        
-        def convert_convtranspose1d_weight(w):
-            """PyTorch ConvTranspose1d (I, O, K) -> MLX (O, K, I)"""
-            # PyTorch: (in_channels, out_channels, kernel_size)
-            # MLX: (out_channels, kernel_size, in_channels)
-            return w.transpose(1, 2, 0)  # (I, O, K) -> (O, K, I)
-        
-        # Load conv_pre (regular weight format after remove_weight_norm)
-        if "conv_pre.weight" in pytorch_state_dict:
-            w = pytorch_state_dict["conv_pre.weight"]
-            self.conv_pre.weight = mx.array(convert_conv1d_weight(w))
-            loaded += 1
-        
-        if "conv_pre.bias" in pytorch_state_dict:
-            self.conv_pre.bias = mx.array(pytorch_state_dict["conv_pre.bias"])
-            loaded += 1
-        
-        # Load upsampling layers
-        for i in range(self.num_upsamples):
-            prefix = f"ups.{i}.0"
-            if f"{prefix}.weight" in pytorch_state_dict:
-                w = pytorch_state_dict[f"{prefix}.weight"]
-                # ConvTranspose1d: different format!
-                self.ups[i][0].weight = mx.array(convert_convtranspose1d_weight(w))
-                loaded += 1
-            if f"{prefix}.bias" in pytorch_state_dict:
-                self.ups[i][0].bias = mx.array(pytorch_state_dict[f"{prefix}.bias"])
-                loaded += 1
-        
-        # Load residual blocks
-        for i in range(len(self.resblocks)):
-            block = self.resblocks[i]
-            prefix = f"resblocks.{i}"
-            
-            # Load convs1
-            for j in range(len(block.convs1)):
-                conv_prefix = f"{prefix}.convs1.{j}"
-                if f"{conv_prefix}.weight" in pytorch_state_dict:
-                    w = pytorch_state_dict[f"{conv_prefix}.weight"]
-                    block.convs1[j].weight = mx.array(convert_conv1d_weight(w))
-                    loaded += 1
-                if f"{conv_prefix}.bias" in pytorch_state_dict:
-                    block.convs1[j].bias = mx.array(pytorch_state_dict[f"{conv_prefix}.bias"])
-                    loaded += 1
-            
-            # Load convs2
-            for j in range(len(block.convs2)):
-                conv_prefix = f"{prefix}.convs2.{j}"
-                if f"{conv_prefix}.weight" in pytorch_state_dict:
-                    w = pytorch_state_dict[f"{conv_prefix}.weight"]
-                    block.convs2[j].weight = mx.array(convert_conv1d_weight(w))
-                    loaded += 1
-                if f"{conv_prefix}.bias" in pytorch_state_dict:
-                    block.convs2[j].bias = mx.array(pytorch_state_dict[f"{conv_prefix}.bias"])
-                    loaded += 1
-            
-            # Load activation parameters (alpha, beta)
-            for j in range(len(block.activations)):
-                act_prefix = f"{prefix}.activations.{j}.activation"
-                act = block.activations[j]
-                
-                if f"{act_prefix}.alpha" in pytorch_state_dict:
-                    act.alpha = mx.array(pytorch_state_dict[f"{act_prefix}.alpha"])
-                    loaded += 1
-                
-                # SnakeBeta has beta parameter
-                if hasattr(act, 'beta') and f"{act_prefix}.beta" in pytorch_state_dict:
-                    act.beta = mx.array(pytorch_state_dict[f"{act_prefix}.beta"])
-                    loaded += 1
-        
-        # Load post activation
-        if "activation_post.activation.alpha" in pytorch_state_dict:
-            self.activation_post.alpha = mx.array(pytorch_state_dict["activation_post.activation.alpha"])
-            loaded += 1
-        if hasattr(self.activation_post, 'beta') and "activation_post.activation.beta" in pytorch_state_dict:
-            self.activation_post.beta = mx.array(pytorch_state_dict["activation_post.activation.beta"])
-            loaded += 1
-        
-        # Load conv_post
-        if "conv_post.weight" in pytorch_state_dict:
-            w = pytorch_state_dict["conv_post.weight"]
-            self.conv_post.weight = mx.array(convert_conv1d_weight(w))
-            loaded += 1
-        if "conv_post.bias" in pytorch_state_dict:
-            self.conv_post.bias = mx.array(pytorch_state_dict["conv_post.bias"])
-            loaded += 1
-        
-        print(f">> MLX BigVGAN loaded {loaded} weight tensors from PyTorch checkpoint")
-        
-        return loaded
+        from indextts.s2mel.modules.mlx_bigvgan_model_weights import load_bigvgan_weights
+        return load_bigvgan_weights(self, pytorch_state_dict)
 
 
 def create_mlx_bigvgan_from_pytorch(pytorch_model, config: dict = None):

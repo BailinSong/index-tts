@@ -110,8 +110,21 @@ def load_dit_weights(mlx_dit, pytorch_state_dict, prefix="models.cfm.estimator."
         print(f"   🔍 Checking cond_embedder weights...")
         print(f"   Available keys with 'cond_embedder': {[k for k in pytorch_state_dict.keys() if 'cond_embedder' in k]}")
         
-        if f"{prefix}cond_embedder.weight" in pytorch_state_dict:
-            pytorch_weight = pytorch_state_dict[f"{prefix}cond_embedder.weight"]
+        # 🔧 修复：尝试多种键名格式
+        cond_embedder_key = None
+        possible_keys = [
+            f"{prefix}cond_embedder.weight",
+            f"estimator.cond_embedder.weight",
+            "cond_embedder.weight"
+        ]
+        
+        for key in possible_keys:
+            if key in pytorch_state_dict:
+                cond_embedder_key = key
+                break
+        
+        if cond_embedder_key:
+            pytorch_weight = pytorch_state_dict[cond_embedder_key]
             mlx_dit.cond_embedder.weight = mx.array(pytorch_weight)
             loaded += 1
             print(f"   ✅ Loaded cond_embedder.weight: {pytorch_weight.shape}, range: [{pytorch_weight.min():.6f}, {pytorch_weight.max():.6f}]")

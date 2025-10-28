@@ -58,7 +58,7 @@ class BASECFM(torch.nn.Module, ABC):
             z = torch.randn([B, self.in_channels, T], device=mu.device) * temperature
         t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
         # t_span = t_span + (-1) * (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
-        return self.solve_euler(z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate, debug_layers=True)
+        return self.solve_euler(z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate, debug_layers=False)
 
     def solve_euler(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate=0.5, debug_layers=False):
         """
@@ -76,13 +76,14 @@ class BASECFM(torch.nn.Module, ABC):
             style (torch.Tensor): reference global style
                 shape: (batch_size, 192)
         """
-        # 逐层调试：记录输入
-        print(f"   x_lens: {x_lens}")
-        print(f"   prompt: {prompt.shape}, min={prompt.min():.6f}, max={prompt.max():.6f}")
-        print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
-        print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
-        print(f"   t_span: {t_span.shape}, min={t_span.min():.6f}, max={t_span.max():.6f}")
-        print(f"   inference_cfg_rate: {inference_cfg_rate}")
+        # 简洁的输入信息（仅在debug模式下显示）
+        if debug_layers:
+            print(f"   x_lens: {x_lens}")
+            print(f"   prompt: {prompt.shape}, min={prompt.min():.6f}, max={prompt.max():.6f}")
+            print(f"   mu: {mu.shape}, min={mu.min():.6f}, max={mu.max():.6f}")
+            print(f"   style: {style.shape}, min={style.min():.6f}, max={style.max():.6f}")
+            print(f"   t_span: {t_span.shape}, min={t_span.min():.6f}, max={t_span.max():.6f}")
+            print(f"   inference_cfg_rate: {inference_cfg_rate}")
         
         t, _, _ = t_span[0], t_span[-1], t_span[1] - t_span[0]
 
@@ -133,7 +134,7 @@ class BASECFM(torch.nn.Module, ABC):
                     stacked_x, stacked_prompt_x, x_lens, stacked_t, stacked_style, stacked_mu,
                 )
 
-                # 逐层调试：记录estimator输出
+                # 逐层调试：记录estimator输出（仅在debug模式下显示）
                 if debug_layers:
                     print(f"   stacked_dphi_dt: {stacked_dphi_dt.shape}, min={stacked_dphi_dt.min():.6f}, max={stacked_dphi_dt.max():.6f}")
                     try:
@@ -175,7 +176,7 @@ class BASECFM(torch.nn.Module, ABC):
                 
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t.unsqueeze(0), style, mu)
                 
-                # 逐层调试：记录estimator输出
+                # 逐层调试：记录estimator输出（仅在debug模式下显示）
                 if debug_layers:
                     print(f"   dphi_dt: {dphi_dt.shape}, min={dphi_dt.min():.6f}, max={dphi_dt.max():.6f}")
                     try:

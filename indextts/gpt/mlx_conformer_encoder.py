@@ -586,7 +586,7 @@ class MLXConformerEncoder(nn.Module):
         self.output_dim = output_dim
         
         # ✅ FIX: Use Conv2d Subsampling to match PyTorch (121 → 60)
-        from indextts.gpt.mlx_subsampling import MLXConv2dSubsampling2Fixed
+        from indextts.gpt.mlx_conformer_subsampling import MLXConv2dSubsampling2Fixed
         self.subsampling = MLXConv2dSubsampling2Fixed(input_dim, output_dim)
         
         # ✅ FIX: xscale for positional encoding (sqrt(d_model))

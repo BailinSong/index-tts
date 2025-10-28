@@ -8,13 +8,13 @@ import mlx.nn as nn
 from typing import Optional
 import math
 
-from indextts.s2mel.modules.mlx_gpt_fast import (
+from indextts.s2mel.modules.mlx_gpt_fast_model import (
     MLXTransformerGPTFast,
     MLXAdaptiveLayerNorm,
     create_mlx_transformer_from_config
 )
-from indextts.s2mel.modules.mlx_wavenet import MLXWaveNet
-from indextts.s2mel.modules.mlx_cfm_rewritten import MLXCFMRewritten
+from indextts.s2mel.modules.mlx_wavenet_model import MLXWaveNet
+from indextts.s2mel.modules.mlx_diffusion_transformer import MLXCFMRewritten
 
 
 def mlx_modulate(x, shift, scale):
@@ -451,7 +451,7 @@ class MLXCFM(nn.Module):
             dit_config = config.DiT
         
         # DiT estimator - 使用重写的版本
-        from indextts.s2mel.modules.mlx_cfm_rewritten import MLXDiTRewritten
+        from indextts.s2mel.modules.mlx_diffusion_transformer import MLXDiTRewritten
         self.estimator = MLXDiTRewritten(config)
         
         # Check if zero_prompt_speech_token is set
@@ -479,14 +479,15 @@ class MLXCFM(nn.Module):
         Returns:
             Generated mel (batch, in_channels, seq_len) - MLX array
         """
-        # 调试：记录输入数据
-        print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
-        print(f"   x_lens: {x_lens}")
-        print(f"   prompt shape: {prompt.shape}, min={float(prompt.min()):.6f}, max={float(prompt.max()):.6f}")
-        print(f"   mu shape: {mu.shape}, min={float(mu.min()):.6f}, max={float(mu.max()):.6f}")
-        print(f"   style shape: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
-        print(f"   t_span shape: {t_span.shape}, min={float(t_span.min()):.6f}, max={float(t_span.max()):.6f}")
-        print(f"   inference_cfg_rate: {inference_cfg_rate}")
+        # 简洁的输入信息（仅在debug模式下显示）
+        if debug_layers:
+            print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
+            print(f"   x_lens: {x_lens}")
+            print(f"   prompt shape: {prompt.shape}, min={float(prompt.min()):.6f}, max={float(prompt.max()):.6f}")
+            print(f"   mu shape: {mu.shape}, min={float(mu.min()):.6f}, max={float(mu.max()):.6f}")
+            print(f"   style shape: {style.shape}, min={float(style.min()):.6f}, max={float(style.max()):.6f}")
+            print(f"   t_span shape: {t_span.shape}, min={float(t_span.min()):.6f}, max={float(t_span.max()):.6f}")
+            print(f"   inference_cfg_rate: {inference_cfg_rate}")
         
         # Initialize
         prompt_len = prompt.shape[-1]
@@ -508,6 +509,7 @@ class MLXCFM(nn.Module):
         print(f">> [MLX CFM] Starting Euler solver ({num_steps} steps)...")
         
         for step in range(1, len(t_span)):
+            # 简洁的进度条，每5步显示一次
             if step % 5 == 0 or step == 1:
                 print(f"   Step {step}/{num_steps}", end='\r')
             
@@ -630,9 +632,10 @@ class MLXCFM(nn.Module):
         
         print(f"\n>> [MLX CFM] Euler solver completed")
         
-        # 调试：记录最终输出
-        print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
-        print(f"   x mean: {float(x.mean()):.6f}, std: {float(x.std()):.6f}")
+        # 简洁的最终输出（仅在debug模式下显示详细信息）
+        if debug_layers:
+            print(f"   x shape: {x.shape}, min={float(x.min()):.6f}, max={float(x.max()):.6f}")
+            print(f"   x mean: {float(x.mean()):.6f}, std: {float(x.std()):.6f}")
         
         return x
     
@@ -689,7 +692,7 @@ class MLXCFM(nn.Module):
         t_span = mx.linspace(0, 1, n_timesteps + 1)
         
         # Solve ODE
-        result = self.solve_euler(z, x_lens_mlx, prompt_mlx, mu_mlx, style_mlx, f0, t_span, inference_cfg_rate, debug_layers=True)
+        result = self.solve_euler(z, x_lens_mlx, prompt_mlx, mu_mlx, style_mlx, f0, t_span, inference_cfg_rate, debug_layers=False)
         
         # Convert back if needed
         if convert_back:
@@ -709,7 +712,22 @@ class MLXCFM(nn.Module):
         Returns:
             Number of weights loaded
         """
-        from indextts.s2mel.modules.mlx_dit_weights import load_dit_weights
+        from indextts.s2mel.modules.mlx_diffusion_transformer_weights import load_dit_weights
+        
+        # 🔧 修复：处理嵌套的 PyTorch 权重结构
+        # 如果 pytorch_state_dict 包含嵌套结构，需要扁平化
+        if 'net' in pytorch_state_dict and 'cfm' in pytorch_state_dict['net']:
+            # 从嵌套结构中提取 CFM 权重
+            cfm_weights = pytorch_state_dict['net']['cfm']
+            # 扁平化键名，不添加 estimator. 前缀（因为 load_dit_weights 会添加）
+            flattened_weights = {}
+            for key, value in cfm_weights.items():
+                # 检查是否为 PyTorch Tensor
+                if hasattr(value, 'numpy'):  # PyTorch Tensor
+                    flattened_weights[key] = value.numpy()
+                else:
+                    flattened_weights[key] = value
+            pytorch_state_dict = flattened_weights
         
         # Load DiT/estimator weights
         if prefix:
@@ -873,6 +891,55 @@ class MLXCFM(nn.Module):
         Returns:
             Number of weights loaded
         """
+        loaded = 0
+        
+        # 🔧 修复：直接加载 cond_projection 权重
+        if 'models.cfm.estimator.cond_projection.weight' in cache_dict and 'models.cfm.estimator.cond_projection.bias' in cache_dict:
+            print("   🔧 Loading cond_projection weights directly...")
+            self.estimator.cond_projection.weight = cache_dict['models.cfm.estimator.cond_projection.weight']
+            self.estimator.cond_projection.bias = cache_dict['models.cfm.estimator.cond_projection.bias']
+            loaded += 2
+            print("   ✅ cond_projection weights loaded successfully")
+        
+        # 🔧 修复：直接加载 t_embedder 权重
+        t_embedder_keys = [
+            'models.cfm.estimator.t_embedder.freqs',
+            'models.cfm.estimator.t_embedder.mlp.0.weight',
+            'models.cfm.estimator.t_embedder.mlp.0.bias',
+            'models.cfm.estimator.t_embedder.mlp.2.weight',
+            'models.cfm.estimator.t_embedder.mlp.2.bias'
+        ]
+        
+        t_embedder_loaded = 0
+        if all(key in cache_dict for key in t_embedder_keys):
+            print("   🔧 Loading t_embedder weights directly...")
+            self.estimator.t_embedder.freqs = cache_dict['models.cfm.estimator.t_embedder.freqs']
+            self.estimator.t_embedder.mlp_0.weight = cache_dict['models.cfm.estimator.t_embedder.mlp.0.weight']
+            self.estimator.t_embedder.mlp_0.bias = cache_dict['models.cfm.estimator.t_embedder.mlp.0.bias']
+            self.estimator.t_embedder.mlp_2.weight = cache_dict['models.cfm.estimator.t_embedder.mlp.2.weight']
+            self.estimator.t_embedder.mlp_2.bias = cache_dict['models.cfm.estimator.t_embedder.mlp.2.bias']
+            t_embedder_loaded = 5
+            loaded += t_embedder_loaded
+            print("   ✅ t_embedder weights loaded successfully")
+        else:
+            missing_keys = [key for key in t_embedder_keys if key not in cache_dict]
+            print(f"   ⚠️ Missing t_embedder keys: {missing_keys}")
+        
+        # 🔧 修复：直接加载 cond_embedder 权重
+        if 'models.cfm.estimator.cond_embedder.weight' in cache_dict:
+            print("   🔧 Loading cond_embedder weights directly...")
+            self.estimator.cond_embedder.weight = cache_dict['models.cfm.estimator.cond_embedder.weight']
+            loaded += 1
+            print("   ✅ cond_embedder weights loaded successfully")
+        
+        # 🔧 修复：直接加载 cond_x_merge_linear 权重
+        if 'models.cfm.estimator.cond_x_merge_linear.weight' in cache_dict and 'models.cfm.estimator.cond_x_merge_linear.bias' in cache_dict:
+            print("   🔧 Loading cond_x_merge_linear weights directly...")
+            self.estimator.cond_x_merge_linear.weight = cache_dict['models.cfm.estimator.cond_x_merge_linear.weight']
+            self.estimator.cond_x_merge_linear.bias = cache_dict['models.cfm.estimator.cond_x_merge_linear.bias']
+            loaded += 2
+            print("   ✅ cond_x_merge_linear weights loaded successfully")
+        
         # 使用 PyTorch 风格的权重加载，避免 MLX update 方法的参数名问题
         try:
             # 将缓存数据转换为 PyTorch 风格的 state_dict
@@ -884,7 +951,8 @@ class MLXCFM(nn.Module):
                     pytorch_state_dict[pytorch_key] = value
             
             # 使用现有的 PyTorch 风格加载方法，但不需要前缀
-            loaded = self.load_weights_from_pytorch(pytorch_state_dict, prefix="")
+            additional_loaded = self.load_weights_from_pytorch(pytorch_state_dict, prefix="")
+            loaded += additional_loaded
             print(f">> Loaded {loaded} weights from cache (PyTorch style)")
             return loaded
             
@@ -893,7 +961,9 @@ class MLXCFM(nn.Module):
             print(">> Falling back to original method...")
             
             # 回退到原始方法
-            return self._load_from_cache_original(cache_dict)
+            additional_loaded = self._load_from_cache_original(cache_dict)
+            loaded += additional_loaded
+            return loaded
     
     def _load_from_cache_original(self, cache_dict):
         """原始的缓存加载方法"""

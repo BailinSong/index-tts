@@ -129,7 +129,7 @@ class IndexTTS2:
         if self.use_mlx and self.mlx_available:
             print("\n>> [Model 1/4] Creating Pure MLX GPT (MLX Cond + MLX Transformer)...")
             try:
-                from indextts.gpt.mlx_model import UnifiedVoiceMLX
+                from indextts.gpt.mlx_model_v2 import UnifiedVoiceMLX
                 mlx_gpt_weights = self.mlx_cache.get_or_convert("gpt", self.gpt_path)
                 # Create MLX model with PURE MLX mode
                 self.mlx_transformer = UnifiedVoiceMLX(
@@ -230,8 +230,8 @@ class IndexTTS2:
         if self.use_mlx and self.mlx_available:
             print("\n>> [Model 2/4] Loading S2MEL MLX modules...")
             try:
-                from indextts.s2mel.modules.mlx_s2mel import MLXGPTLayer, MLXLengthRegulator
-                from indextts.s2mel.modules.mlx_cfm import MLXCFM
+                from indextts.s2mel.modules.mlx_commons import MLXGPTLayer, MLXLengthRegulator
+                from indextts.s2mel.modules.mlx_flow_matching import MLXCFM
                 
                 # Create gpt_layer and length_regulator (always needed)
                 self.mlx_s2mel_gpt_layer = MLXGPTLayer()
