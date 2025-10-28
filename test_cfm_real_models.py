@@ -69,13 +69,13 @@ class RealCFMConsistencyTest:
         print(f"\n🔥 加载 PyTorch CFM 模型...")
         
         try:
-            from indextts.s2mel.modules.flow_matching import BASECFM
-            from indextts.s2mel.modules.diffusion_transformer import DiT
+            # 使用生产代码的初始化方式
+            from indextts.infer_v2 import IndexTTS2
             
-            # 这里需要根据实际配置创建模型
-            # 暂时使用模拟的方式
+            # 初始化 PyTorch 版本的 IndexTTS2
+            self.pytorch_tts = IndexTTS2(use_mlx=False)
+            self.pytorch_cfm = self.pytorch_tts.s2mel  # 获取 CFM 模型
             print(f"   ✅ PyTorch CFM 模型加载成功")
-            self.pytorch_cfm = "pytorch_cfm_loaded"
             return True
         except Exception as e:
             print(f"   ❌ PyTorch CFM 模型加载失败: {e}")
@@ -86,13 +86,13 @@ class RealCFMConsistencyTest:
         print(f"\n🔥 加载 MLX CFM 模型...")
         
         try:
-            from indextts.s2mel.modules.mlx_flow_matching import MLXCFM
-            from indextts.s2mel.modules.mlx_diffusion_transformer import MLXDiTRewritten
+            # 使用生产代码的初始化方式
+            from indextts.infer_v2 import IndexTTS2
             
-            # 这里需要根据实际配置创建模型
-            # 暂时使用模拟的方式
+            # 初始化 MLX 版本的 IndexTTS2
+            self.mlx_tts = IndexTTS2(use_mlx=True)
+            self.mlx_cfm = self.mlx_tts.mlx_s2mel_cfm  # 获取 MLX CFM 模型
             print(f"   ✅ MLX CFM 模型加载成功")
-            self.mlx_cfm = "mlx_cfm_loaded"
             return True
         except Exception as e:
             print(f"   ❌ MLX CFM 模型加载失败: {e}")
@@ -106,11 +106,12 @@ class RealCFMConsistencyTest:
             print(f"   ❌ PyTorch CFM 模型未加载")
             return None
         
-        # 提取输入参数
-        mu = pytorch_inputs['mu']
-        x_lens = pytorch_inputs['x_lens']
-        prompt = pytorch_inputs['prompt']
-        style = pytorch_inputs['style']
+        # 提取输入参数并移动到正确的设备
+        device = next(self.pytorch_cfm.parameters()).device
+        mu = pytorch_inputs['mu'].to(device)
+        x_lens = pytorch_inputs['x_lens'].to(device)
+        prompt = pytorch_inputs['prompt'].to(device)
+        style = pytorch_inputs['style'].to(device)
         f0 = pytorch_inputs['f0']
         n_timesteps = pytorch_inputs['n_timesteps']
         temperature = pytorch_inputs['temperature']
@@ -125,13 +126,24 @@ class RealCFMConsistencyTest:
         print(f"     temperature: {temperature}")
         print(f"     inference_cfg_rate: {inference_cfg_rate}")
         
-        # 模拟 PyTorch CFM 推理
-        # 这里应该调用真实的 CFM 模型
+        # 使用真实的 PyTorch CFM 模型进行推理
         print(f"   🔄 执行 PyTorch CFM 推理...")
         
-        # 模拟推理过程
-        seq_len = x_lens.item()
-        pytorch_output = torch.randn(1, 80, seq_len) * 0.1  # 模拟输出
+        # 创建统一随机数生成器
+        from unified_random_generator import UnifiedRandomGenerator
+        unified_random = UnifiedRandomGenerator(seed=42)
+        
+        # 调用真实的 inference 方法
+        pytorch_output = self.pytorch_cfm.models['cfm'].inference(
+            mu,
+            x_lens,
+            prompt,
+            style,
+            f0,
+            n_timesteps,
+            inference_cfg_rate=inference_cfg_rate,
+            unified_random=unified_random
+        )
         
         print(f"   ✅ PyTorch CFM 输出: {pytorch_output.shape}")
         return pytorch_output
@@ -163,13 +175,25 @@ class RealCFMConsistencyTest:
         print(f"     temperature: {temperature}")
         print(f"     inference_cfg_rate: {inference_cfg_rate}")
         
-        # 模拟 MLX CFM 推理
-        # 这里应该调用真实的 CFM 模型
+        # 使用真实的 MLX CFM 模型进行推理
         print(f"   🔄 执行 MLX CFM 推理...")
         
-        # 模拟推理过程
-        seq_len = x_lens.item()
-        mlx_output = mx.random.normal((1, 80, seq_len)) * 0.1  # 模拟输出
+        # 创建统一随机数生成器
+        from unified_random_generator import UnifiedRandomGenerator
+        unified_random = UnifiedRandomGenerator(seed=42)
+        
+        # 调用真实的 inference 方法
+        mlx_output = self.mlx_cfm.inference(
+            mu=mu,
+            x_lens=x_lens,
+            prompt=prompt,
+            style=style,
+            f0=f0,
+            n_timesteps=n_timesteps,
+            temperature=temperature,
+            inference_cfg_rate=inference_cfg_rate,
+            unified_random=unified_random
+        )
         
         print(f"   ✅ MLX CFM 输出: {mlx_output.shape}")
         return mlx_output

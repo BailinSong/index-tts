@@ -42,8 +42,8 @@ for i in range(CONFIG['num_runs']):
     is_warmup = (i < CONFIG['warmup'])
     label = "预热" if is_warmup else f"Run {run_num - CONFIG['warmup']}"
     
-    # 选择对应的文本
-    text = CONFIG['texts'][i]
+    # 选择对应的文本（循环使用）
+    text = CONFIG['texts'][i % len(CONFIG['texts'])]
     
     print(f"\n{'='*80}")
     print(f"[{label}] 第{run_num}次运行 - 文本: '{text}'")

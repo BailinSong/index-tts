@@ -82,6 +82,28 @@ class UnifiedRandomGenerator:
         
         return noise_mlx
     
+    def generate_noise_both(self, shape: Tuple[int, ...], device: str = 'cpu') -> Tuple[torch.Tensor, mx.array]:
+        """
+        同时生成 PyTorch 和 MLX 一致性噪声
+        
+        Args:
+            shape: 噪声形状
+            device: 设备
+            
+        Returns:
+            (PyTorch噪声, MLX噪声)
+        """
+        # 使用numpy生成基础随机数（只生成一次）
+        noise_np = self.np_generator.randn(*shape).astype(np.float32)
+        
+        # 转换为PyTorch张量
+        noise_torch = torch.from_numpy(noise_np).to(device)
+        
+        # 转换为MLX数组
+        noise_mlx = mx.array(noise_np)
+        
+        return noise_torch, noise_mlx
+    
     def generate_noise_like(self, tensor: torch.Tensor) -> torch.Tensor:
         """
         生成与给定张量形状相同的一致性噪声

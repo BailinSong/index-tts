@@ -84,7 +84,11 @@ def load_dit_weights(mlx_dit, pytorch_state_dict, prefix="models.cfm.estimator."
     # x_embedder (with weight_norm)
     w = load_weight_norm(pytorch_state_dict, f"{prefix}x_embedder")
     if w is not None:
-        mlx_dit.x_embedder.weight = mx.array(w)
+        # 🔧 修复：MLX Linear 权重布局与 PyTorch 不同
+        # PyTorch: (out_features, in_features) = (512, 80)
+        # MLX: (in_features, out_features) = (80, 512)
+        # 需要转置
+        mlx_dit.x_embedder.weight = mx.array(w.T)
         loaded += 1
     if f"{prefix}x_embedder.bias" in pytorch_state_dict:
         mlx_dit.x_embedder.bias = mx.array(pytorch_state_dict[f"{prefix}x_embedder.bias"])

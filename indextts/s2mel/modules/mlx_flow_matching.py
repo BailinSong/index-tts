@@ -591,6 +591,9 @@ class MLXCFM(nn.Module):
                 print(f"   t: {float(t):.6f}")
                 print(f"   dt: {float(dt):.6f}")
             
+            # 缓存每步输入
+            self._cache_cfm_step_input(step, x, t, prompt_x, style, mu, x_lens)
+            
             if inference_cfg_rate > 0:
                 # Classifier-free guidance: stack original and null inputs
                 stacked_prompt_x = mx.concatenate([prompt_x, mx.zeros_like(prompt_x)], axis=0)
@@ -623,12 +626,18 @@ class MLXCFM(nn.Module):
                     except ImportError:
                         pass
                 
+                # 缓存 DiT 估计器输入
+                self._cache_dit_input(step, stacked_x, stacked_prompt_x, stacked_x_lens, stacked_t, stacked_style, stacked_mu)
+                
                 # Forward pass
                 stacked_dphi_dt = self.estimator(
                     stacked_x, stacked_prompt_x, stacked_x_lens, 
                     stacked_t, stacked_style, stacked_mu,
                     mask_content=False  # First half uses content
                 )
+                
+                # 缓存 DiT 估计器输出
+                self._cache_dit_output(step, stacked_dphi_dt)
                 
                 # 调试：记录 estimator 输出
                 if debug_layers:
@@ -666,7 +675,13 @@ class MLXCFM(nn.Module):
                     except ImportError:
                         pass
                 
+                # 缓存 DiT 估计器输入
+                self._cache_dit_input(step, x, prompt_x, x_lens, t_scalar, style, mu)
+                
                 dphi_dt = self.estimator(x, prompt_x, x_lens, t_scalar, style, mu)
+                
+                # 缓存 DiT 估计器输出
+                self._cache_dit_output(step, dphi_dt)
                 
                 # 调试：记录 estimator 输出
                 if debug_layers:
@@ -685,6 +700,9 @@ class MLXCFM(nn.Module):
             
             # Euler step (与PyTorch版本完全一致，无裁剪)
             x = x + dt * dphi_dt
+            
+            # 缓存每步输出
+            self._cache_cfm_step_output(step, x, dphi_dt)
             
             # 时间更新（与PyTorch版本完全一致）
             t = t + dt
@@ -710,6 +728,133 @@ class MLXCFM(nn.Module):
         self._cache_cfm_output(x)
         
         return x
+    
+    def _cache_cfm_step_input(self, step: int, x, t, prompt_x, style, mu, x_lens):
+        """缓存 CFM 每步输入"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            import numpy as np
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'x': np.array(x),
+                't': float(t),
+                'prompt_x': np.array(prompt_x),
+                'style': np.array(style),
+                'mu': np.array(mu),
+                'x_lens': np.array(x_lens),
+                'step': step,
+                'timestamp': time.time()
+            }
+            
+            # 保存到文件
+            cache_file = os.path.join(self._cfm_cache_dir, f"cfm_mlx_step_{step:03d}_input_{int(time.time() * 1000)}.pkl")
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+        except Exception as e:
+            print(f"⚠️  MLX CFM step {step} input caching failed: {e}")
+    
+    def _cache_cfm_step_output(self, step: int, x, dphi_dt):
+        """缓存 CFM 每步输出"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            import numpy as np
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'x': np.array(x),
+                'dphi_dt': np.array(dphi_dt),
+                'step': step,
+                'timestamp': time.time()
+            }
+            
+            # 保存到文件
+            cache_file = os.path.join(self._cfm_cache_dir, f"cfm_mlx_step_{step:03d}_output_{int(time.time() * 1000)}.pkl")
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+        except Exception as e:
+            print(f"⚠️  MLX CFM step {step} output caching failed: {e}")
+    
+    def _cache_dit_input(self, step: int, x, prompt_x, x_lens, t, style, mu):
+        """缓存 DiT 估计器输入"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            import numpy as np
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'x': np.array(x),
+                'prompt_x': np.array(prompt_x),
+                'x_lens': np.array(x_lens),
+                't': np.array(t),
+                'style': np.array(style),
+                'mu': np.array(mu),
+                'step': step,
+                'timestamp': time.time()
+            }
+            
+            # 保存到文件
+            cache_file = os.path.join(self._cfm_cache_dir, f"cfm_mlx_step_{step:03d}_dit_input_{int(time.time() * 1000)}.pkl")
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+        except Exception as e:
+            print(f"⚠️  MLX CFM step {step} DiT input caching failed: {e}")
+    
+    def _cache_dit_output(self, step: int, dphi_dt):
+        """缓存 DiT 估计器输出"""
+        if not self._cfm_cache_enabled:
+            return
+        
+        try:
+            import os
+            import pickle
+            import time
+            import numpy as np
+            
+            # 创建缓存目录
+            os.makedirs(self._cfm_cache_dir, exist_ok=True)
+            
+            # 准备缓存数据
+            cache_data = {
+                'dphi_dt': np.array(dphi_dt),
+                'step': step,
+                'timestamp': time.time()
+            }
+            
+            # 保存到文件
+            cache_file = os.path.join(self._cfm_cache_dir, f"cfm_mlx_step_{step:03d}_dit_output_{int(time.time() * 1000)}.pkl")
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+        except Exception as e:
+            print(f"⚠️  MLX CFM step {step} DiT output caching failed: {e}")
     
     def _cache_cfm_inputs(self, x, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate):
         """缓存 CFM 输入数据"""
@@ -747,7 +892,10 @@ class MLXCFM(nn.Module):
             
             print(f"🔍 Cached MLX CFM inputs: {filename}")
             print(f"   📊 Shapes: x={x.shape}, mu={mu.shape}, prompt={prompt.shape}, style={style.shape}")
-            print(f"   📊 x_lens: {x_lens.item()}, cfg_rate: {inference_cfg_rate}")
+            if hasattr(x_lens, 'size') and x_lens.size > 0:
+                print(f"   📊 x_lens: {x_lens[0]}, cfg_rate: {inference_cfg_rate}")
+            else:
+                print(f"   📊 x_lens: {x_lens}, cfg_rate: {inference_cfg_rate}")
             
         except Exception as e:
             print(f"⚠️  CFM input caching failed: {e}")
@@ -814,10 +962,11 @@ class MLXCFM(nn.Module):
             convert_back = True
             device = mu.device
         else:
-            mu_mlx = mu
-            x_lens_mlx = x_lens
-            prompt_mlx = prompt
-            style_mlx = style
+            # 确保所有输入都是 MLX 数组
+            mu_mlx = mu if isinstance(mu, mx.array) else mx.array(mu)
+            x_lens_mlx = x_lens if isinstance(x_lens, mx.array) else mx.array(x_lens)
+            prompt_mlx = prompt if isinstance(prompt, mx.array) else mx.array(prompt)
+            style_mlx = style if isinstance(style, mx.array) else mx.array(style)
             convert_back = False
         
         batch, seq_len, _ = mu_mlx.shape
