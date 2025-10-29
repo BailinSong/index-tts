@@ -57,8 +57,13 @@ def load_weight_norm(state_dict, prefix):
 
 def convert_conv1d_weight(w):
     """PyTorch Conv1d (O, I, K) -> MLX (O, K, I)"""
+    print(f"   🔍 convert_conv1d_weight: input shape = {w.shape}")
     if len(w.shape) == 3:
-        return w.transpose(0, 2, 1)
+        # 使用numpy的transpose，因为w是numpy数组
+        result = np.transpose(w, (0, 2, 1))  # (O, I, K) -> (O, K, I)
+        print(f"   🔍 convert_conv1d_weight: output shape = {result.shape}")
+        return result
+    print(f"   🔍 convert_conv1d_weight: not 3D, returning as-is")
     return w
 
 

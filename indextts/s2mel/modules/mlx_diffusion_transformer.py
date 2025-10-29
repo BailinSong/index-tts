@@ -226,7 +226,7 @@ class MLXDiTRewritten(nn.Module):
             self.final_layer = MLXFinalLayerRewritten(
                 wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, 
                 1, 
-                wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim
+                wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim  # 应该是512，与PyTorch版本一致
             )
             self.res_projection = nn.Linear(dit_cfg['hidden_dim'] if isinstance(dit_cfg, dict) else dit_cfg.hidden_dim, 
                                            wavenet_cfg['hidden_dim'] if isinstance(wavenet_cfg, dict) else wavenet_cfg.hidden_dim, bias=True)
@@ -303,8 +303,8 @@ class MLXDiTRewritten(nn.Module):
             pass
         
         # Transpose x and prompt_x to (batch, seq_len, channels) - 与PyTorch版本完全一致
-        x_t = x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
-        prompt_x_t = prompt_x.transpose(0, 2, 1)  # (batch, seq_len, in_channels)
+        x_t = mx.transpose(x, (0, 2, 1))  # (batch, seq_len, in_channels)
+        prompt_x_t = mx.transpose(prompt_x, (0, 2, 1))  # (batch, seq_len, in_channels)
         
         # 调试：记录 x embedding
         try:
@@ -314,6 +314,13 @@ class MLXDiTRewritten(nn.Module):
             pass
                         # Concatenate inputs: [x, prompt_x, cond] - 与PyTorch版本完全一致
         x_in = mx.concatenate([x_t, prompt_x_t, cond_proj], axis=-1)
+        
+        # 调试：记录拼接输入
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("concat_inputs", mlx_data={'x_in': x_in}, layer=0)
+        except ImportError:
+            pass
                 # Add style conditioning if not using style_as_token - 与PyTorch版本完全一致
         if self.transformer_style_condition and not self.style_as_token:
             # Broadcast style to all timesteps
@@ -322,6 +329,13 @@ class MLXDiTRewritten(nn.Module):
                 (batch, seq_len, style.shape[-1])
             )
             x_in = mx.concatenate([x_in, style_broadcast], axis=-1)
+            
+            # 调试：记录风格条件
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("style_conditioning", mlx_data={'style_broadcast': style_broadcast, 'x_in_with_style': x_in}, layer=0)
+            except ImportError:
+                pass
                     # Apply masking for CFG - 与PyTorch版本完全一致
         # 在推理模式下，class_dropout应该为False
         class_dropout = False
@@ -336,6 +350,13 @@ class MLXDiTRewritten(nn.Module):
             ], axis=-1)
                     # Merge inputs to hidden_dim - 与PyTorch版本完全一致
         x_in = self.cond_x_merge_linear(x_in)  # (batch, seq_len, hidden_dim)
+        
+        # 调试：记录条件合并线性层
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("cond_x_merge_linear", mlx_data={'x_in_merged': x_in}, layer=0)
+        except ImportError:
+            pass
                 # Add style/time as tokens if needed - 与PyTorch版本完全一致
         if self.style_as_token:
             style_tok = self.style_in(style).reshape(batch, 1, -1)
@@ -366,7 +387,12 @@ class MLXDiTRewritten(nn.Module):
             mask_expanded = None
         
         # Forward through Transformer - 与PyTorch版本完全一致
-        # 调试输出已移除
+        # 调试：记录 Transformer 输入
+        try:
+            from indextts.utils.cfm_debugger import log_cfm_stage
+            log_cfm_stage("transformer_input", mlx_data={'x_in': x_in, 't_emb': t_emb, 'input_pos': input_pos, 'mask_expanded': mask_expanded}, layer=0)
+        except ImportError:
+            pass
         
         x_res = self.transformer(
             x_in,
@@ -392,14 +418,33 @@ class MLXDiTRewritten(nn.Module):
         
         # Long skip connection - 与PyTorch版本完全一致
         if self.long_skip_connection:
-            x_res = self.skip_linear(mx.concatenate([x_res, x_t], axis=-1))
+            skip_input = mx.concatenate([x_res, x_t], axis=-1)
+            x_res = self.skip_linear(skip_input)
+            
+            # 调试：记录 Skip Connection
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("skip_connection", mlx_data={'skip_input': skip_input, 'skip_output': x_res}, layer=0)
+            except ImportError:
+                pass
         
         # Final layer - 与PyTorch版本完全一致
         if self.final_layer_type == 'wavenet':
             # WaveNet path
             x_out = self.conv1(x_res)  # (batch, seq_len, wavenet_dim)
-                        # Create mask for WaveNet
-            positions = mx.arange(x_out.shape[1]).reshape(1, 1, -1)
+            
+            # 调试：记录 conv1 输出
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("conv1_output", mlx_data={'conv1_out': x_out}, layer=0)
+            except ImportError:
+                pass
+            
+            # 添加 WaveNet 前的转置操作 - 匹配 PyTorch 版本
+            x_out = x_out.transpose(0, 2, 1)  # (batch, channels, seq_len)
+            
+            # Create mask for WaveNet - 调整形状以匹配转置后的 x_out
+            positions = mx.arange(x_out.shape[2]).reshape(1, 1, -1)
             if x_lens.ndim == 0:
                 x_lens = mx.array([x_lens.item()])
             lens_for_mask = x_lens.reshape(-1, 1, 1)
@@ -407,20 +452,70 @@ class MLXDiTRewritten(nn.Module):
             
             # Get timestep embedding for WaveNet
             t2_emb = self.t_embedder2(t)  # (batch, wavenet_dim)
-            t2_emb_expanded = mx.broadcast_to(t2_emb[:, None, :], (batch, x_out.shape[1], t2_emb.shape[-1]))
-                        # WaveNet forward
-            x_out = self.wavenet(x_out, x_mask, g=t2_emb_expanded)
-                        # Add residual from transformer
-            x_out = x_out + self.res_projection(x_res)
+            t2_emb_expanded = mx.broadcast_to(t2_emb[:, None, :], (batch, x_out.shape[2], t2_emb.shape[-1]))
+            
+            # 调试：记录 WaveNet 输入
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("wavenet_input", mlx_data={'x_transposed': x_out, 't2_emb': t2_emb_expanded, 'x_mask': x_mask}, layer=0)
+            except ImportError:
+                pass
+            
+            # WaveNet forward - 需要转置 x_out 以匹配 MLX WaveNet 期望的 (batch, seq_len, channels) 格式
+            x_out_for_wavenet = x_out.transpose(0, 2, 1)  # (batch, channels, seq_len) -> (batch, seq_len, channels)
+            wavenet_out = self.wavenet(x_out_for_wavenet, x_mask, g=t2_emb_expanded)
+            
+            # 计算 res_proj - x_res 已经是正确的形状 (batch, seq_len, channels)
+            res_proj = self.res_projection(x_res)
+            
+            # 添加 WaveNet 后的转置操作 - 匹配 PyTorch 版本
+            # wavenet_out 和 res_proj 都是 (batch, seq_len, channels) 形状
+            # 在 PyTorch 中：wavenet_out.transpose(1, 2) + res_proj
+            # 在 MLX 中：wavenet_out 已经是 (batch, seq_len, channels)，直接相加
+            x_out = wavenet_out + res_proj  # (batch, seq_len, channels) + (batch, seq_len, channels)
+            
+            # 调试：记录 WaveNet 输出
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("wavenet_output", mlx_data={'wavenet_out': wavenet_out, 'res_proj': res_proj, 'wavenet_plus_res': x_out}, layer=0)
+            except ImportError:
+                pass
+            
             # Final layer with AdaLN
+            final_layer_input = x_out
             x_out = self.final_layer(x_out, t_emb)  # (batch, seq_len, wavenet_dim)
+            
+            # 调试：记录 FinalLayer
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("final_layer", mlx_data={'final_layer_input': final_layer_input, 'final_layer_output': x_out}, layer=0)
+            except ImportError:
+                pass
+            
+            # MLX Conv1d 输入格式: (batch, seq_len, in_channels)
+            # PyTorch Conv1d 输入格式: (batch, in_channels, seq_len)
+            # final_layer输出: (batch, seq_len, 512)
+            # 不需要转置，直接传入conv2
+            
             # Final conv (1x1)
-            x_out = self.conv2(x_out)  # (batch, seq_len, in_channels)
+            x_out = self.conv2(x_out)  # (batch, seq_len, out_channels) - MLX Conv1d输出格式
+            
+            # 调试：记录 conv2 输出
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("conv2_output", mlx_data={'conv2_out': x_out}, layer=0)
+            except ImportError:
+                pass
+            
+            # 转置为PyTorch格式: (batch, out_channels, seq_len)
+            x_out = x_out.transpose(0, 2, 1)  # (batch, out_channels, seq_len)
         else:
             # MLP path - 与PyTorch版本完全一致
             x_out = self.final_mlp_0(x_res)
             x_out = nn.silu(x_out)
             x_out = self.final_mlp_2(x_out)
+            # 添加 MLP 后的转置操作 - 匹配 PyTorch 版本
+            x_out = x_out.transpose(0, 2, 1)  # (batch, channels, seq_len)
         
         # 调试：记录 final layer 输出
         try:
@@ -429,9 +524,7 @@ class MLXDiTRewritten(nn.Module):
         except ImportError:
             pass
         
-        # Transpose back to (batch, out_channels, seq_len) - 与PyTorch版本完全一致
-        x_out = x_out.transpose(0, 2, 1)
-                # Convert back to PyTorch if needed
+        # Convert back to PyTorch if needed
         if convert_back:
             from indextts.utils.mlx_utils import mlx_to_torch
             x_out = mlx_to_torch(x_out, device='mps')

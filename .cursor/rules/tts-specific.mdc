@@ -50,3 +50,30 @@ IndexTTS2 是一个自回归零样本文本转语音系统，具有以下特点�
 - 模型配置存储在 [checkpoints/config.yaml](mdc:checkpoints/config.yaml)
 - 支持动态设备检测（CUDA/MPS/XPU/CPU）
 - 自动下载必要的模型文件
+
+## 开发环境要求
+### Conda 环境
+- **必须使用 `conda indextts2` 环境运行所有分析脚本**
+- 激活环境：`conda activate indextts2`
+- 该环境包含所有必要的依赖：torch, mlx, numpy, omegaconf, audiotools 等
+
+### 运行分析脚本
+```bash
+# 激活环境
+conda activate indextts2
+
+# 运行 CFM 阶段分析
+python analyze_cfm_stages.py
+
+# 运行 DiT 权重分析
+python analyze_dit_weights_only.py
+
+# 运行 DiT 内部差异分析
+python analyze_dit_internal_diffs.py
+```
+
+### 环境依赖
+- Python >= 3.10
+- PyTorch (CUDA/MPS 支持)
+- MLX (Apple Silicon 优化)
+- 其他依赖见 [pyproject.toml](mdc:pyproject.toml)

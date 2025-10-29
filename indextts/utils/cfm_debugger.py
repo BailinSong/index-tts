@@ -87,11 +87,11 @@ class CFMDebugger:
             else:
                 return {
                     'shape': list(data.shape),
-                    'dtype': str(data.dtype),
-                    'min': float(data.min()),
-                    'max': float(data.max()),
-                    'mean': float(data.mean()),
-                    'std': float(data.std()),
+                'dtype': str(data.dtype),
+                'min': float(data.min()) if data.dtype != torch.bool else bool(data.min()),
+                'max': float(data.max()) if data.dtype != torch.bool else bool(data.max()),
+                'mean': float(data.mean()) if data.dtype != torch.bool else float(data.float().mean()),
+                'std': float(data.std()) if data.dtype != torch.bool else float(data.float().std()),
                     'data_sample': self._get_sample_data(data)
                 }
         elif isinstance(data, (list, tuple)):

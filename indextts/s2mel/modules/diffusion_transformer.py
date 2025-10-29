@@ -213,50 +213,61 @@ class DiT(torch.nn.Module):
         B, _, T = x.size()
 
         # 调试：记录 timestep embedding
+        t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
         if debug_layers:
             try:
                 from indextts.utils.cfm_debugger import log_cfm_stage
-                t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
                 log_cfm_stage("timestep_embedding", pytorch_data={'t_emb': t1}, layer=0)
             except ImportError:
-                t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
-        else:
-            t1 = self.t_embedder(t)  # (N, D) # t1 [2, 512]
+                pass
 
         # 调试：记录 conditioning projection
+        cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
         if debug_layers:
             try:
                 from indextts.utils.cfm_debugger import log_cfm_stage
-                cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
                 log_cfm_stage("cond_projection", pytorch_data={'cond_proj': cond_proj}, layer=0)
             except ImportError:
-                cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
-        else:
-            cond_proj = cond_in_module(cond) # cond [2,1863,512]->[2,1863,512]
+                pass
 
         # 调试：记录 x embedding
+        x_t = x.transpose(1, 2) # [2,1863,80]
+        prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
         if debug_layers:
             try:
                 from indextts.utils.cfm_debugger import log_cfm_stage
-                x_t = x.transpose(1, 2) # [2,1863,80]
-                prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
                 log_cfm_stage("x_embedding", pytorch_data={'x_t': x_t, 'prompt_x_t': prompt_x_t}, layer=0)
             except ImportError:
-                x_t = x.transpose(1, 2) # [2,1863,80]
-                prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
-        else:
-            x_t = x.transpose(1, 2) # [2,1863,80]
-            prompt_x_t = prompt_x.transpose(1, 2) # [2,1863,80]
+                pass
 
         x_in = torch.cat([x_t, prompt_x_t, cond_proj], dim=-1) # 80+80+512=672 [2, 1863, 672]
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("concat_inputs", pytorch_data={'x_in': x_in}, layer=0)
+            except ImportError:
+                pass
         
         if self.transformer_style_condition and not self.style_as_token: # True and True
-            x_in = torch.cat([x_in, style[:, None, :].repeat(1, T, 1)], dim=-1) #[2, 1863, 864]
+            style_broadcast = style[:, None, :].repeat(1, T, 1)
+            x_in = torch.cat([x_in, style_broadcast], dim=-1) #[2, 1863, 864]
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("style_conditioning", pytorch_data={'style_broadcast': style_broadcast, 'x_in_with_style': x_in}, layer=0)
+                except ImportError:
+                    pass
             
         if class_dropout: #False
             x_in[..., self.in_channels:] = x_in[..., self.in_channels:] * 0 # 80维后全置为0
             
         x_in = self.cond_x_merge_linear(x_in)  # (N, T, D) [2, 1863, 512]
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("cond_x_merge_linear", pytorch_data={'x_in_merged': x_in}, layer=0)
+            except ImportError:
+                pass
         
         if self.style_as_token: # False
             style = self.style_in(style)
@@ -269,6 +280,14 @@ class DiT(torch.nn.Module):
         x_mask = sequence_mask(x_lens + self.style_as_token + self.time_as_token).to(x.device).unsqueeze(1) #torch.Size([1, 1, 1863])True
         input_pos = self.input_pos[:x_in.size(1)]  # (T,) range（0，1863）
         x_mask_expanded = x_mask[:, None, :].repeat(1, 1, x_in.size(1), 1) if not self.is_causal else None # torch.Size([1, 1, 1863, 1863]
+        
+        if debug_layers:
+            try:
+                from indextts.utils.cfm_debugger import log_cfm_stage
+                log_cfm_stage("transformer_input", pytorch_data={'x_in': x_in, 't_emb': t1.unsqueeze(1), 'input_pos': input_pos, 'x_mask_expanded': x_mask_expanded}, layer=0)
+            except ImportError:
+                pass
+        
         x_res = self.transformer(x_in, t1.unsqueeze(1), input_pos, x_mask_expanded) # [2, 1863, 512]
         x_res = x_res[:, 1:] if self.time_as_token else x_res
         x_res = x_res[:, 1:] if self.style_as_token else x_res
@@ -282,15 +301,64 @@ class DiT(torch.nn.Module):
                 pass
         
         if self.long_skip_connection: #True
-            x_res = self.skip_linear(torch.cat([x_res, x_t], dim=-1))
+            skip_input = torch.cat([x_res, x_t], dim=-1)
+            x_res = self.skip_linear(skip_input)
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("skip_connection", pytorch_data={'skip_input': skip_input, 'skip_output': x_res}, layer=0)
+                except ImportError:
+                    pass
+        
         if self.final_layer_type == 'wavenet':
             x = self.conv1(x_res)
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("conv1_output", pytorch_data={'conv1_out': x}, layer=0)
+                except ImportError:
+                    pass
+            
             x = x.transpose(1, 2)
             t2 = self.t_embedder2(t)
-            x = self.wavenet(x, x_mask, g=t2.unsqueeze(2)).transpose(1, 2) + self.res_projection(
-                x_res)  # long residual connection
-            x = self.final_layer(x, t1).transpose(1, 2)
+            
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("wavenet_input", pytorch_data={'x_transposed': x, 't2_emb': t2.unsqueeze(2), 'x_mask': x_mask}, layer=0)
+                except ImportError:
+                    pass
+            
+            wavenet_out = self.wavenet(x, x_mask, g=t2.unsqueeze(2))
+            res_proj = self.res_projection(x_res)
+            x = wavenet_out.transpose(1, 2) + res_proj  # long residual connection
+            
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("wavenet_output", pytorch_data={'wavenet_out': wavenet_out, 'res_proj': res_proj, 'wavenet_plus_res': x}, layer=0)
+                except ImportError:
+                    pass
+            
+            final_layer_input = x
+            x = self.final_layer(x, t1)
+            
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("final_layer", pytorch_data={'final_layer_input': final_layer_input, 'final_layer_output': x}, layer=0)
+                except ImportError:
+                    pass
+            
+            x = x.transpose(1, 2)
             x = self.conv2(x)
+            
+            if debug_layers:
+                try:
+                    from indextts.utils.cfm_debugger import log_cfm_stage
+                    log_cfm_stage("conv2_output", pytorch_data={'conv2_out': x}, layer=0)
+                except ImportError:
+                    pass
         else:
             x = self.final_mlp(x_res)
             x = x.transpose(1, 2)

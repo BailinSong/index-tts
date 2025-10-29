@@ -824,6 +824,12 @@ class CFMStageAnalyzer:
         
         # 分析 DiT 权重
         self.analyze_dit_weights()
+        
+        # 分析 DiT 层实现差异
+        self.analyze_dit_layer_implementation()
+        
+        # 保存调试数据
+        self.save_debug_data()
 
     def execute_first_step_inference(self):
         """执行第一步推理并生成步骤子过程缓存"""
@@ -869,6 +875,13 @@ class CFMStageAnalyzer:
             with np.load(npz_path, allow_pickle=True) as data:
                 cache_dict = {k: data[k] for k in data.files}
             mlx_cfm.load_from_cache(cache_dict)
+            
+            # 启用 MLX DiT 调试模式
+            print("   🔧 启用 MLX DiT 调试模式...")
+            mlx_dit = mlx_cfm.estimator
+            mlx_dit._debug_layers = True
+            print("   ✅ MLX DiT 调试模式已启用")
+            
             print("✅ 模型初始化成功并加载 MLX 权重")
         except Exception as e:
             print(f"❌ 模型初始化失败: {e}")
@@ -916,6 +929,12 @@ class CFMStageAnalyzer:
             pytorch_cfm._cfm_cache_enabled = True
             pytorch_cfm._cfm_cache_dir = os.path.abspath(self.cache_dir)
             os.makedirs(pytorch_cfm._cfm_cache_dir, exist_ok=True)
+            
+            # 启用 DiT 调试模式
+            print("   🔧 启用 PyTorch DiT 调试模式...")
+            pytorch_dit = pytorch_cfm.estimator
+            pytorch_dit._debug_layers = True
+            print("   ✅ PyTorch DiT 调试模式已启用")
 
             # 执行 PyTorch 第一步推理（会生成 cfm_pytorch_step_001_*）
             print("   🔧 执行 PyTorch 第一步推理...")
@@ -1043,6 +1062,9 @@ class CFMStageAnalyzer:
         
         # 尝试加载实际的步骤缓存文件
         self.load_and_analyze_step_cache_files()
+
+        # 使用生产 DiT 模型在缓存的 DiT 输入上直接验证
+        self.verify_dit_with_production_on_cached_inputs()
     
     def load_and_analyze_step_cache_files(self):
         """加载并分析实际的步骤缓存文件"""
@@ -1076,6 +1098,219 @@ class CFMStageAnalyzer:
         # 分析DiT输入和输出文件
         self.analyze_step_files(latest_pytorch_files, latest_mlx_files, "dit_input")
         self.analyze_step_files(latest_pytorch_files, latest_mlx_files, "dit_output")
+
+        # 进一步：专门对 DiT 子流程做严格对齐与差异报告
+        self.analyze_dit_subflow_diffs()
+
+    def verify_dit_with_production_on_cached_inputs(self):
+        """使用生产 PyTorch/MLX DiT 在最近的缓存 DiT 输入上直接跑一遍并对比输出。"""
+        print(f"\n   🔍 使用生产 DiT 在缓存输入上直接验证:")
+        import glob
+        import os
+        import pickle
+        import numpy as np
+        try:
+            from indextts.infer_v2 import IndexTTS2
+        except Exception as e:
+            print(f"   ❌ 无法导入生产入口 IndexTTS2: {e}")
+            return
+
+        # 定位最近的一组 DiT 输入缓存（任选一侧作为输入源，这里优先用 PyTorch 的）
+        pt_in_files = glob.glob(os.path.join(self.cache_dir, "cfm_pytorch_step_*_dit_input_*.pkl"))
+        mx_in_files = glob.glob(os.path.join(self.cache_dir, "cfm_mlx_step_*_dit_input_*.pkl"))
+        if not pt_in_files and not mx_in_files:
+            print("   ⚠️  未找到任何 DiT 输入缓存文件，跳过验证")
+            return
+        input_file = max(pt_in_files or mx_in_files, key=os.path.getmtime)
+        try:
+            with open(input_file, 'rb') as f:
+                data = pickle.load(f)
+        except Exception as e:
+            print(f"   ❌ 加载缓存输入失败: {e}")
+            return
+
+        # 规范输入到 numpy/torch/mx
+        x_np = data.get('x')
+        prompt_x_np = data.get('prompt_x')
+        mu_np = data.get('mu')
+        style_np = data.get('style')
+        t_np = data.get('t')
+        x_lens_np = data.get('x_lens')
+        if any(v is None for v in [x_np, prompt_x_np, mu_np, style_np, t_np, x_lens_np]):
+            print("   ❌ DiT 输入缓存键不完整，跳过验证")
+            return
+
+        # 加载生产 PyTorch 与 MLX 模型（只取 DiT 估计器）
+        try:
+            torch_tts = IndexTTS2(use_mlx=False)
+            torch_dit = torch_tts.s2mel.models['cfm'].estimator
+        except Exception as e:
+            print(f"   ❌ 加载 PyTorch DiT 失败: {e}")
+            return
+        try:
+            mlx_tts = IndexTTS2(use_mlx=True)
+            mlx_dit = mlx_tts.mlx_s2mel_cfm.estimator
+        except Exception as e:
+            print(f"   ❌ 加载 MLX DiT 失败: {e}")
+            return
+
+        # 准备并运行 PyTorch 前向
+        try:
+            device = next(torch_dit.parameters()).device
+            x_pt = torch.as_tensor(x_np).to(device)
+            prompt_x_pt = torch.as_tensor(prompt_x_np).to(device)
+            mu_pt = torch.as_tensor(mu_np).to(device)
+            style_pt = torch.as_tensor(style_np).to(device)
+            t_pt = torch.as_tensor(t_np).to(device)
+            x_lens_pt = torch.as_tensor(x_lens_np).to(device)
+            with torch.no_grad():
+                y_pt = torch_dit(x_pt, prompt_x_pt, x_lens_pt, t_pt, style_pt, mu_pt)
+        except Exception as e:
+            print(f"   ❌ PyTorch DiT 前向失败: {e}")
+            return
+
+        # 准备并运行 MLX 前向
+        try:
+            x_mx = mx.array(x_np)
+            prompt_x_mx = mx.array(prompt_x_np)
+            mu_mx = mx.array(mu_np)
+            style_mx = mx.array(style_np)
+            t_mx = mx.array(t_np)
+            x_lens_mx = mx.array(x_lens_np)
+            y_mx = mlx_dit(x_mx, prompt_x_mx, x_lens_mx, t_mx, style_mx, mu_mx)
+        except Exception as e:
+            print(f"   ❌ MLX DiT 前向失败: {e}")
+            return
+
+        # 对比输出
+        try:
+            y_pt_np = y_pt.detach().cpu().numpy()
+            y_mx_np = np.array(y_mx)
+            print(f"   PyTorch 输出: shape={y_pt_np.shape}, min={np.min(y_pt_np):.6f}, max={np.max(y_pt_np):.6f}, avg={np.mean(y_pt_np):.6f}")
+            print(f"   MLX 输出:     shape={y_mx_np.shape}, min={np.min(y_mx_np):.6f}, max={np.max(y_mx_np):.6f}, avg={np.mean(y_mx_np):.6f}")
+            if y_pt_np.shape == y_mx_np.shape:
+                diff = np.abs(y_pt_np - y_mx_np)
+                print(f"   差异: max={float(np.max(diff)):.6f}, mean={float(np.mean(diff)):.6f}")
+            else:
+                print(f"   ❌ 输出形状不一致: PT={y_pt_np.shape}, MLX={y_mx_np.shape}")
+        except Exception as e:
+            print(f"   ❌ 输出对比失败: {e}")
+
+    def analyze_dit_subflow_diffs(self):
+        """严格对齐并比较 DiT 子流程 torch 与 MLX 的输入/输出差异。
+
+        - 只比较同一步(step)中最近的一组 `dit_input` 和 `dit_output` 文件
+        - 针对关键键: x, prompt_x, mu, style, t, x_lens, dphi_dt
+        - 处理常见形状差异: t 的标量/一维, x_lens 的标量/一维
+        - 提供转置建议: 若 (B, C, T) 与 (B, T, C) 错置则提示
+        """
+        import os
+        import glob
+        import pickle
+        import numpy as np
+
+        def _latest_by_pattern(pattern: str):
+            files = glob.glob(os.path.join(self.cache_dir, pattern))
+            return max(files, key=os.path.getmtime) if files else None
+
+        # 定位最近的一组 torch/mlx dit_input 与 dit_output
+        pt_in = _latest_by_pattern("cfm_pytorch_step_*_dit_input_*.pkl")
+        mx_in = _latest_by_pattern("cfm_mlx_step_*_dit_input_*.pkl")
+        pt_out = _latest_by_pattern("cfm_pytorch_step_*_dit_output_*.pkl")
+        mx_out = _latest_by_pattern("cfm_mlx_step_*_dit_output_*.pkl")
+
+        if not (pt_in and mx_in):
+            print("   ⚠️  未找到完整的 DiT 输入缓存对 (pytorch/mlx)")
+            return
+        if not (pt_out and mx_out):
+            print("   ⚠️  未找到完整的 DiT 输出缓存对 (pytorch/mlx)")
+            return
+
+        try:
+            with open(pt_in, 'rb') as f: pt_in_data = pickle.load(f)
+            with open(mx_in, 'rb') as f: mx_in_data = pickle.load(f)
+            with open(pt_out, 'rb') as f: pt_out_data = pickle.load(f)
+            with open(mx_out, 'rb') as f: mx_out_data = pickle.load(f)
+        except Exception as e:
+            print(f"   ❌ 载入 DiT 子流程缓存失败: {e}")
+            return
+
+        print(f"\n   🔍 DiT 子流程严格对齐差异分析:")
+
+        def to_numpy(x):
+            import torch
+            import mlx.core as mx
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+            if isinstance(x, mx.array):
+                return np.array(x)
+            if isinstance(x, np.ndarray):
+                return x
+            # 标量或列表
+            try:
+                return np.array(x)
+            except Exception:
+                return None
+
+        def summarize(name, a, b):
+            a_np, b_np = to_numpy(a), to_numpy(b)
+            if a_np is None or b_np is None:
+                print(f"     {name}: 无法转换为 numpy 进行比较")
+                return
+            # 统一 dtype
+            try:
+                a_np = a_np.astype(np.float32) if a_np.dtype.kind in 'fc' else a_np
+                b_np = b_np.astype(np.float32) if b_np.dtype.kind in 'fc' else b_np
+            except Exception:
+                pass
+
+            # 特殊处理: t 允许 (2,) vs (2,1) 或标量
+            if name == 't':
+                a_np = np.squeeze(a_np)
+                b_np = np.squeeze(b_np)
+                # 对齐到一维
+                if a_np.ndim == 0: a_np = np.array([a_np])
+                if b_np.ndim == 0: b_np = np.array([b_np])
+
+            # 特殊处理: x_lens 允许标量/一维
+            if name == 'x_lens':
+                a_np = np.squeeze(a_np)
+                b_np = np.squeeze(b_np)
+                if a_np.ndim == 0: a_np = np.array([a_np])
+                if b_np.ndim == 0: b_np = np.array([b_np])
+
+            same_shape = a_np.shape == b_np.shape
+            if not same_shape:
+                print(f"     ❌ {name} 形状不匹配: PT={a_np.shape}, MLX={b_np.shape}")
+                # 对 x/prompt_x 提示常见错置
+                if name in ['x', 'prompt_x'] and a_np.ndim == 3 and b_np.ndim == 3:
+                    if a_np.shape == (b_np.shape[0], b_np.shape[2], b_np.shape[1]):
+                        print(f"        💡 {name} 可能存在 (B,C,T)<->(B,T,C) 维度错置")
+                return
+
+            # 数值差异
+            try:
+                diff = np.abs(a_np - b_np)
+                print(f"     {name}: shape={a_np.shape}, max={float(np.max(a_np)):.6f}/{float(np.max(b_np)):.6f}, min={float(np.min(a_np)):.6f}/{float(np.min(b_np)):.6f}, avg={float(np.mean(a_np)):.6f}/{float(np.mean(b_np)):.6f}")
+                print(f"       差异: max={float(np.max(diff)):.6f}, mean={float(np.mean(diff)):.6f}")
+            except Exception as e:
+                print(f"     ⚠️ {name} 差异计算失败: {e}")
+
+        # 输入键对比
+        print("\n     📥 DiT 输入对比:")
+        for k in ['x', 'prompt_x', 'mu', 'style', 't', 'x_lens']:
+            if k in pt_in_data and k in mx_in_data:
+                summarize(k, pt_in_data[k], mx_in_data[k])
+            else:
+                print(f"     ⚠️ 缺少键: {k} (PT有? {k in pt_in_data}, MLX有? {k in mx_in_data})")
+
+        # 输出键对比
+        print("\n     📤 DiT 输出对比:")
+        k = 'dphi_dt'
+        if k in pt_out_data and k in mx_out_data:
+            summarize(k, pt_out_data[k], mx_out_data[k])
+        else:
+            print(f"     ⚠️ 缺少键: {k} (PT有? {k in pt_out_data}, MLX有? {k in mx_out_data})")
     
     def analyze_step_files(self, pytorch_files, mlx_files, file_type):
         """分析特定类型的步骤文件"""
@@ -1161,6 +1396,76 @@ class CFMStageAnalyzer:
         
         except Exception as e:
             print(f"   ❌ 加载 {file_type} 文件失败: {e}")
+    
+    def analyze_dit_layer_implementation(self):
+        """分析 DiT 层实现差异"""
+        print(f"\n{'='*60}")
+        print(f"🔍 DiT 层实现差异分析")
+        print(f"{'='*60}")
+        
+        try:
+            # 导入 DiT 层实现分析器
+            from analyze_dit_layer_implementation import DiTLayerImplementationAnalyzer
+            
+            # 创建分析器并执行分析
+            dit_analyzer = DiTLayerImplementationAnalyzer(self.cache_dir)
+            dit_analyzer.analyze_dit_implementation_differences()
+            
+        except Exception as e:
+            print(f"❌ DiT 层实现差异分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def save_debug_data(self):
+        """保存调试数据"""
+        print(f"\n{'='*60}")
+        print(f"🔍 保存调试数据")
+        print(f"{'='*60}")
+        
+        try:
+            from indextts.utils.cfm_debugger import get_debugger, save_cfm_debug
+            
+            # 获取全局调试器
+            debugger = get_debugger()
+            
+            # 检查调试数据
+            pytorch_stages = len(debugger.debug_data.get('pytorch', {}))
+            mlx_stages = len(debugger.debug_data.get('mlx', {}))
+            
+            print(f"📊 调试数据统计:")
+            print(f"   PyTorch 数据: {pytorch_stages} 个阶段")
+            print(f"   MLX 数据: {mlx_stages} 个阶段")
+            
+            if pytorch_stages > 0 or mlx_stages > 0:
+                # 保存调试数据
+                debug_file = save_cfm_debug("complete_dit_debug_analysis.pkl")
+                print(f"💾 调试数据已保存到: {debug_file}")
+                
+                # 打印详细的调试数据信息
+                print(f"\n📊 PyTorch 调试数据详情:")
+                for stage, data in debugger.debug_data.get('pytorch', {}).items():
+                    print(f"   {stage}: {len(data)} 个张量")
+                    for key, value in data.items():
+                        if hasattr(value, 'shape'):
+                            print(f"     {key}: {value.shape}")
+                        else:
+                            print(f"     {key}: {type(value)}")
+                
+                print(f"\n📊 MLX 调试数据详情:")
+                for stage, data in debugger.debug_data.get('mlx', {}).items():
+                    print(f"   {stage}: {len(data)} 个张量")
+                    for key, value in data.items():
+                        if hasattr(value, 'shape'):
+                            print(f"     {key}: {value.shape}")
+                        else:
+                            print(f"     {key}: {type(value)}")
+            else:
+                print("❌ 没有找到调试数据")
+                
+        except Exception as e:
+            print(f"❌ 保存调试数据失败: {e}")
+            import traceback
+            traceback.print_exc()
 
 def main():
     analyzer = CFMStageAnalyzer()
