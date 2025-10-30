@@ -332,22 +332,27 @@ def load_wavenet_weights(mlx_dit, pytorch_state_dict, prefix):
     loaded = 0
     wn_prefix = f"{prefix}"
     
-    # t_embedder2
-    if f"{wn_prefix}t_embedder2.mlp.0.weight" in pytorch_state_dict:
-        mlx_dit.t_embedder2.mlp_0.weight = mx.array(pytorch_state_dict[f"{wn_prefix}t_embedder2.mlp.0.weight"])
-        loaded += 1
-    if f"{wn_prefix}t_embedder2.mlp.0.bias" in pytorch_state_dict:
-        mlx_dit.t_embedder2.mlp_0.bias = mx.array(pytorch_state_dict[f"{wn_prefix}t_embedder2.mlp.0.bias"])
-        loaded += 1
-    if f"{wn_prefix}t_embedder2.mlp.2.weight" in pytorch_state_dict:
-        mlx_dit.t_embedder2.mlp_2.weight = mx.array(pytorch_state_dict[f"{wn_prefix}t_embedder2.mlp.2.weight"])
-        loaded += 1
-    if f"{wn_prefix}t_embedder2.mlp.2.bias" in pytorch_state_dict:
-        mlx_dit.t_embedder2.mlp_2.bias = mx.array(pytorch_state_dict[f"{wn_prefix}t_embedder2.mlp.2.bias"])
-        loaded += 1
-    if f"{wn_prefix}t_embedder2.freqs" in pytorch_state_dict:
-        mlx_dit.t_embedder2.freqs = mx.array(pytorch_state_dict[f"{wn_prefix}t_embedder2.freqs"])
-        loaded += 1
+    # t_embedder2: support both estimator root and nested under final_layer
+    t2_prefixes = [
+        f"{wn_prefix}t_embedder2",
+        f"{wn_prefix}final_layer.t_embedder2",
+    ]
+    for t2p in t2_prefixes:
+        if f"{t2p}.mlp.0.weight" in pytorch_state_dict:
+            mlx_dit.t_embedder2.mlp_0.weight = mx.array(pytorch_state_dict[f"{t2p}.mlp.0.weight"])
+            loaded += 1
+        if f"{t2p}.mlp.0.bias" in pytorch_state_dict:
+            mlx_dit.t_embedder2.mlp_0.bias = mx.array(pytorch_state_dict[f"{t2p}.mlp.0.bias"])
+            loaded += 1
+        if f"{t2p}.mlp.2.weight" in pytorch_state_dict:
+            mlx_dit.t_embedder2.mlp_2.weight = mx.array(pytorch_state_dict[f"{t2p}.mlp.2.weight"])
+            loaded += 1
+        if f"{t2p}.mlp.2.bias" in pytorch_state_dict:
+            mlx_dit.t_embedder2.mlp_2.bias = mx.array(pytorch_state_dict[f"{t2p}.mlp.2.bias"])
+            loaded += 1
+        if f"{t2p}.freqs" in pytorch_state_dict:
+            mlx_dit.t_embedder2.freqs = mx.array(pytorch_state_dict[f"{t2p}.freqs"])
+            loaded += 1
     
     # conv1
     if f"{wn_prefix}conv1.weight" in pytorch_state_dict:
@@ -377,16 +382,93 @@ def load_wavenet_weights(mlx_dit, pytorch_state_dict, prefix):
     # WaveNet layers
     n_layers = mlx_dit.wavenet.n_layers
     for i in range(n_layers):
-        layer_prefix = f"{wn_prefix}wavenet.in_layers.{i}.conv.conv"
-        
-        # Load with weight_norm
-        w = load_weight_norm(pytorch_state_dict, layer_prefix)
-        if w is not None:
-            mlx_dit.wavenet.in_layers[i].weight = mx.array(convert_conv1d_weight(w))
+        # Resolve MLX target conv
+        target_layer = mlx_dit.wavenet.in_layers[i]
+        target_conv = getattr(target_layer, 'conv', None)
+        if target_conv is not None and hasattr(target_conv, 'conv'):
+            target_conv = target_conv.conv
+
+        # Build candidate PT prefixes (weight_norm base)
+        base = f"{wn_prefix}wavenet.in_layers.{i}"
+        candidate_bases = [f"{base}.conv.conv", f"{base}.conv", base]
+        # For layer 0, also try common 1x1 naming variants
+        if i == 0:
+            candidate_bases.extend([
+                f"{base}.conv1x1.conv",
+                f"{base}.conv_1x1.conv",
+                f"{base}.conv1x1",
+                f"{base}.conv_1x1",
+            ])
+
+        w = None
+        used_prefix = None
+        for cand in candidate_bases:
+            w_try = load_weight_norm(pytorch_state_dict, cand)
+            if w_try is not None:
+                used_prefix = cand
+                w = w_try
+                break
+
+        # Assign if available, with kernel-size guard for layer 0
+        loaded_this_in = False
+        if w is not None and target_conv is not None:
+            w_conv = convert_conv1d_weight(w)
+            kdim = w_conv.shape[1] if len(w_conv.shape) == 3 else 1
+            target_conv.weight = mx.array(w_conv)
             loaded += 1
-        if f"{layer_prefix}.bias" in pytorch_state_dict:
-            mlx_dit.wavenet.in_layers[i].bias = mx.array(pytorch_state_dict[f"{layer_prefix}.bias"])
-            loaded += 1
+            loaded_this_in = True
+            # bias
+            bias_key = f"{used_prefix}.bias" if used_prefix is not None else None
+            if bias_key and bias_key in pytorch_state_dict:
+                target_conv.bias = mx.array(pytorch_state_dict[bias_key])
+                loaded += 1
+            print(f"   ✅ Loaded wavenet.in_layers[{i}] from '{used_prefix}', kernel_dim={kdim}")
+
+        # Special fallback for layer 0: actively search for any 1x1 conv weight
+        if i == 0 and not loaded_this_in and target_conv is not None:
+            print("   🔎 Searching state_dict for 1x1 kernel for in_layers[0]...")
+            # First, list all candidate keys under in_layers.0 including weight_norm keys
+            candidate_info = []
+            for key, val in pytorch_state_dict.items():
+                if "wavenet.in_layers.0" in key and (key.endswith(".weight") or key.endswith(".weight_g") or key.endswith(".weight_v")):
+                    shape = getattr(val, 'shape', None)
+                    candidate_info.append((key, shape))
+            if candidate_info:
+                print("   🔍 Candidates for in_layers[0] weights (incl. weight_norm):")
+                for key, shape in candidate_info:
+                    print(f"      - {key}: shape={shape}")
+            # Now try prefixes derived from both .weight and weight_norm keys
+            tried_prefixes = set()
+            for key in list(pytorch_state_dict.keys()):
+                if "wavenet.in_layers.0" not in key:
+                    continue
+                if key.endswith(".weight"):
+                    prefix = key[:-7]
+                elif key.endswith(".weight_g"):
+                    prefix = key[:-9]
+                elif key.endswith(".weight_v"):
+                    prefix = key[:-9]
+                else:
+                    continue
+                if prefix in tried_prefixes:
+                    continue
+                tried_prefixes.add(prefix)
+                raw_w = load_weight_norm(pytorch_state_dict, prefix)
+                if raw_w is None:
+                    continue
+                if len(raw_w.shape) == 3 and int(raw_w.shape[2]) == 1:
+                    w_conv = convert_conv1d_weight(raw_w)
+                    target_conv.weight = mx.array(w_conv)
+                    # try bias with same prefix
+                    bkey = f"{prefix}.bias"
+                    if bkey in pytorch_state_dict:
+                        target_conv.bias = mx.array(pytorch_state_dict[bkey])
+                    loaded += 1
+                    loaded_this_in = True
+                    print(f"   ✅ Loaded in_layers[0] via fallback '{prefix}', kernel_dim=1")
+                    break
+            if not loaded_this_in:
+                print("   ❌ Could not find 1x1 weight for in_layers[0]; keeping init weights")
         
         # res_skip layers
         res_prefix = f"{wn_prefix}wavenet.res_skip_layers.{i}.conv.conv"
@@ -394,8 +476,9 @@ def load_wavenet_weights(mlx_dit, pytorch_state_dict, prefix):
         if w_res is not None:
             mlx_dit.wavenet.res_skip_layers[i].weight = mx.array(convert_conv1d_weight(w_res))
             loaded += 1
-        if f"{res_prefix}.bias" in pytorch_state_dict:
-            mlx_dit.wavenet.res_skip_layers[i].bias = mx.array(pytorch_state_dict[f"{res_prefix}.bias"])
+        res_bias_key = f"{res_prefix}.bias"
+        if res_bias_key in pytorch_state_dict:
+            mlx_dit.wavenet.res_skip_layers[i].bias = mx.array(pytorch_state_dict[res_bias_key])
             loaded += 1
     
     # WaveNet cond_layer (if exists)
@@ -405,8 +488,9 @@ def load_wavenet_weights(mlx_dit, pytorch_state_dict, prefix):
         if w_cond is not None:
             mlx_dit.wavenet.cond_layer.weight = mx.array(convert_conv1d_weight(w_cond))
             loaded += 1
-        if f"{cond_prefix}.bias" in pytorch_state_dict:
-            mlx_dit.wavenet.cond_layer.bias = mx.array(pytorch_state_dict[f"{cond_prefix}.bias"])
+        cond_bias_key = f"{cond_prefix}.bias"
+        if cond_bias_key in pytorch_state_dict:
+            mlx_dit.wavenet.cond_layer.bias = mx.array(pytorch_state_dict[cond_bias_key])
             loaded += 1
     
     # final_layer (FinalLayer with AdaLN)
