@@ -213,10 +213,51 @@ class IndexTTS2:
         # Semantic Codec 必须保留（推理时需要 vq2emb 查表）
         semantic_codec = build_semantic_codec(self.cfg.semantic_codec)
         semantic_code_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
-        safetensors.torch.load_model(semantic_codec, semantic_code_ckpt)
+        # Try MLX npz cache first
+        cache_loaded = False
+        if self.use_mlx and self.mlx_available and self.mlx_cache is not None:
+            try:
+                import mlx.core as mx
+                cache_path = self.mlx_cache.get_cache_path("semantic_codec")
+                if os.path.exists(cache_path):
+                    print(">> Loading semantic_codec from MLX cache...")
+                    print(f"   Cache: {cache_path}")
+                    mlx_state = mx.load(cache_path)
+                    # Convert MLX arrays back to torch tensors
+                    state_dict = {}
+                    for k, v in mlx_state.items():
+                        if hasattr(v, "shape"):
+                            import numpy as np
+                            np_arr = np.array(v)
+                            state_dict[k] = torch.from_numpy(np_arr)
+                        else:
+                            state_dict[k] = v
+                    missing, unexpected = semantic_codec.load_state_dict(state_dict, strict=False)
+                    if len(missing) == 0:
+                        cache_loaded = True
+                        size_mb = os.path.getsize(cache_path) / (1024*1024)
+                        print(f"   Size: {size_mb:.2f} MB")
+                        print(">> ✓ Loaded semantic_codec from cache")
+                    else:
+                        print(f">> semantic_codec cache missing keys: {len(missing)}, fallback to safetensors")
+            except Exception as e:
+                print(f">> semantic_codec cache load failed: {e}")
+        if not cache_loaded:
+            safetensors.torch.load_model(semantic_codec, semantic_code_ckpt)
+            # After loading from safetensors, cache it for next run
+            if self.use_mlx and self.mlx_available and self.mlx_cache is not None:
+                try:
+                    print(">> Caching semantic_codec weights to MLX npz...")
+                    self.mlx_cache.convert_and_cache("semantic_codec", state_dict=semantic_codec.state_dict())
+                    print(">> ✓ semantic_codec cached")
+                except Exception as e:
+                    print(f">> semantic_codec caching skipped: {e}")
         self.semantic_codec = semantic_codec.to(self.device)
         self.semantic_codec.eval()
-        print('>> semantic_codec weights restored from: {}'.format(semantic_code_ckpt))
+        if cache_loaded:
+            print('>> semantic_codec weights restored from: MLX cache (semantic_codec.npz)')
+        else:
+            print('>> semantic_codec weights restored from: {}'.format(semantic_code_ckpt))
 
         # Load S2MEL model with MLX caching if enabled
         s2mel_path = os.path.join(self.model_dir, self.cfg.s2mel_checkpoint)
@@ -460,7 +501,7 @@ class IndexTTS2:
             
             print(f"Cache Directory: {self.mlx_cache.cache_dir}")
             print("\nCached Models:")
-            for model in ["gpt", "s2mel", "bigvgan"]:
+            for model in ["gpt", "s2mel", "bigvgan", "semantic_codec"]:
                 status = "✓ Cached" if self.mlx_cache.is_cached(model) else "✗ Not cached"
                 print(f"  {model.upper():10s}: {status}")
             

@@ -140,31 +140,17 @@ class MLXMultiHeadAttention(nn.Module):
             v = mx.concatenate([past_v, v], axis=2)
             kv_seq_len = k.shape[2]
         
-        # Attention scores
-        scores = (q @ k.transpose(0, 1, 3, 2)) * self.scale
-        
-        # Apply causal mask (GPT2 style: True=allowed, False=masked)
+        # Use MLX fast SDPA implementation
+        # Prepare mask slice aligned to current kv length and query length
+        attn_mask = None
         if causal_mask is not None:
-            # When using KV cache (seq_len=1), we're at position kv_seq_len-1
-            # and can attend to all previous positions
             if past_kv is not None and seq_len == 1:
-                # Current position is kv_seq_len - 1
                 current_pos = kv_seq_len - 1
-                # Extract mask for current position: can attend to positions [0, kv_seq_len)
-                mask_slice = causal_mask[:, :, current_pos:current_pos+1, :kv_seq_len]
+                attn_mask = causal_mask[:, :, current_pos:current_pos+1, :kv_seq_len]
             else:
-                # No cache or full sequence: extract mask for all query positions
-                mask_slice = causal_mask[:, :, :seq_len, :kv_seq_len]
-            
-            # CRITICAL FIX: Use mx.where() to apply mask (matching PyTorch)
-            # True = keep score, False = replace with -inf
-            # This matches transformers_gpt2.py line 269: attn_weights = torch.where(causal_mask, attn_weights, mask_value)
-            mask_value = float(np.finfo(np.float32).min)  # -3.4e38
-            scores = mx.where(mask_slice, scores, mask_value)
+                attn_mask = causal_mask[:, :, :seq_len, :kv_seq_len]
         
-        # Softmax and apply to values
-        attn_weights = mx.softmax(scores, axis=-1)
-        attn_output = attn_weights @ v
+        attn_output = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale, mask=attn_mask)
         
         # Reshape and project
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(batch, seq_len, self.embed_dim)
